@@ -59,6 +59,17 @@ internal sealed class ResolutionSession : IDisposable
     private readonly Il2CppMethodInfoLayoutDetector _layoutDetector;
 
     /// <summary>
+    /// Validates known <c>Il2CppClass</c> structural profiles against multiple independent normal static-field declarations before class static storage is interpreted.
+    /// </summary>
+    private readonly Il2CppClassLayoutDetector _classLayoutDetector;
+
+    /// <summary>
+    /// Stores the target-wide <c>Il2CppClass</c> compatibility layout after successful multi-class validation.
+    /// A null value indicates that normal static-field storage has not yet established sufficient structural evidence.
+    /// </summary>
+    private Il2CppClassLayout? _classLayout;
+
+    /// <summary>
     /// Defines the maximum duration allowed for each individual remote IL2CPP runtime invocation.
     /// </summary>
     private readonly TimeSpan _callTimeout;
@@ -88,7 +99,7 @@ internal sealed class ResolutionSession : IDisposable
     /// <param name="backend">The semantic resolution backend used by the session.</param>
     /// <param name="layoutDetector">The runtime layout detector used for native method-code mapping.</param>
     /// <param name="callTimeout">The timeout applied to individual remote runtime calls.</param>
-    private ResolutionSession(TargetProcess process, Il2CppTarget target, Il2CppRuntime runtime, IIl2CppResolutionBackend backend, ResolutionCache cache, Il2CppMethodInfoLayoutDetector layoutDetector, TimeSpan callTimeout)
+    private ResolutionSession(TargetProcess process, Il2CppTarget target, Il2CppRuntime runtime, IIl2CppResolutionBackend backend, ResolutionCache cache, Il2CppMethodInfoLayoutDetector layoutDetector, Il2CppClassLayoutDetector classLayoutDetector, TimeSpan callTimeout)
     {
         _process = process;
         _target = target;
@@ -96,6 +107,7 @@ internal sealed class ResolutionSession : IDisposable
         _backend = backend;
         _cache = cache;
         _layoutDetector = layoutDetector;
+        _classLayoutDetector = classLayoutDetector;
         _callTimeout = callTimeout;
     }
 
@@ -130,8 +142,15 @@ internal sealed class ResolutionSession : IDisposable
         };
 
             Il2CppMethodInfoLayoutDetector layoutDetector = new(target, layouts, MinimumValidatedMethodCount);
+            Il2CppClassLayout[] classLayouts =
+            {
+                Il2CppClassLayout.Class29_1X64,
+                Il2CppClassLayout.Class29_2X64
+            };
 
-            return new ResolutionSession(process, target, runtime, backend, cache, layoutDetector, callTimeout);
+            Il2CppClassLayoutDetector classLayoutDetector = new(target, classLayouts, minimumValidatedClassCount: 3);
+
+            return new ResolutionSession(process, target, runtime, backend, cache, layoutDetector, classLayoutDetector, callTimeout);
         }
         catch
         {
@@ -240,6 +259,148 @@ internal sealed class ResolutionSession : IDisposable
     }
 
     /// <summary>
+    /// Resolves concrete normal static-field storage using the class-layout profile already detected for the current target session.
+    /// </summary>
+    /// <param name="query">The semantic field query identifying the requested normal static field.</param>
+    /// <returns>The validated normal static-field storage mapping.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when no class-layout compatibility profile has yet been detected for this session.
+    /// </exception>
+    public ResolvedFieldStorage ResolveFieldStorage(FieldQuery query)
+    {
+        ThrowIfDisposed();
+
+        if (_classLayout is null)
+            throw new InvalidOperationException("No IL2CPP class layout has been selected. Supply an explicit layout or provide evidence for automatic layout detection.");
+
+        ResolvedField field = _backend.ResolveField(query);
+
+        return ResolveFieldStorage(field, _classLayout);
+    }
+
+    /// <summary>
+    /// Resolves concrete normal static-field storage while automatically detecting the target <c>Il2CppClass</c> layout from multiple independent static-field declarations when necessary.
+    /// Once a unique profile has been validated, it is retained for subsequent static-field storage resolutions in the same session.
+    /// </summary>
+    /// <param name="query">The semantic field query identifying the requested normal static field.</param>
+    /// <param name="layoutEvidenceQueries">Additional normal static fields belonging to independent declaring classes and used as layout evidence.</param>
+    /// <returns>The validated normal static-field storage mapping.</returns>
+    public ResolvedFieldStorage ResolveFieldStorage(FieldQuery query, IReadOnlyList<FieldQuery> layoutEvidenceQueries)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(layoutEvidenceQueries);
+
+        ResolvedField field = _backend.ResolveField(query);
+
+        Il2CppClassLayout layout = GetClassLayout(field, layoutEvidenceQueries);
+
+        return ResolveFieldStorage(field, layout);
+    }
+
+    /// <summary>
+    /// Resolves concrete normal static-field storage using the exact <c>Il2CppClass</c> layout explicitly supplied by the caller.
+    /// This path bypasses automatic class-layout detection entirely and does not modify any layout previously detected for the session.
+    /// The supplied layout is still subject to all pointer, size, offset and memory-readability validations performed by <see cref="Il2CppStaticFieldStorageResolver"/>.
+    /// </summary>
+    /// <param name="query">The semantic field query identifying the requested normal static field.</param>
+    /// <param name="layout">The explicit structural layout used to interpret the declaring <c>Il2CppClass</c>.</param>
+    /// <returns>The validated concrete static-field storage mapping.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="query"/> or <paramref name="layout"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// Thrown when the requested field uses thread-static storage.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the requested field is not a normal static field.
+    /// </exception>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the explicit layout produces inconsistent or unreadable runtime storage information.
+    /// </exception>
+    public ResolvedFieldStorage ResolveFieldStorage(FieldQuery query, Il2CppClassLayout layout)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(layout);
+
+        ResolvedField field = _backend.ResolveField(query);
+
+        return ResolveFieldStorage(field, layout);
+    }
+
+
+    /// <summary>
+    /// Maps an already resolved normal static field to concrete process storage through the specified class-layout profile.
+    /// Compatible mappings are reused from the session cache when available.
+    /// </summary>
+    /// <param name="field">The semantically resolved normal static field.</param>
+    /// <param name="layout">The explicit or automatically detected <c>Il2CppClass</c> compatibility profile.</param>
+    /// <returns>The validated concrete static-field storage mapping.</returns>
+    private ResolvedFieldStorage ResolveFieldStorage(ResolvedField field, Il2CppClassLayout layout)
+    {
+        if (_cache.TryGetFieldStorage(field.FieldInfoAddress, layout, out ResolvedFieldStorage? cachedStorage))
+            return cachedStorage;
+
+        Il2CppStaticFieldStorageResolver storageResolver = new(_target, layout);
+        ResolvedFieldStorage storage = storageResolver.Resolve(field);
+
+        _cache.StoreFieldStorage(storage, layout);
+
+        return storage;
+    }
+
+    /// <summary>
+    /// Ensures that a unique target-wide <c>Il2CppClass</c> layout has been detected before normal static-field storage is interpreted.
+    /// The target field itself contributes evidence and additional supplied static-field queries must provide enough distinct declaring classes to satisfy the detector confidence threshold.
+    /// </summary>
+    /// <param name="targetField">The normal static field whose storage will subsequently be resolved.</param>
+    /// <param name="evidenceQueries">Additional semantic static-field queries used to establish independent class-layout evidence.</param>
+    /// <returns>The unique validated <c>Il2CppClass</c> compatibility profile.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="targetField"/> or <paramref name="evidenceQueries"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the supplied fields do not provide enough independent evidence or when no unique compatibility profile survives validation.
+    /// </exception>
+    private Il2CppClassLayout GetClassLayout(ResolvedField targetField, IReadOnlyList<FieldQuery> evidenceQueries)
+    {
+        if (_classLayout is not null)
+            return _classLayout;
+
+        ArgumentNullException.ThrowIfNull(targetField);
+        ArgumentNullException.ThrowIfNull(evidenceQueries);
+
+        List<ResolvedField> evidence = new(checked(evidenceQueries.Count + 1));
+        HashSet<nint> fieldAddresses = new();
+
+        if (targetField.StorageKind == FieldStorageKind.Static)
+        {
+            evidence.Add(targetField);
+            fieldAddresses.Add(targetField.FieldInfoAddress);
+        }
+
+        foreach (FieldQuery query in evidenceQueries)
+        {
+            ArgumentNullException.ThrowIfNull(query);
+
+            ResolvedField field = _backend.ResolveField(query);
+
+            if (field.StorageKind != FieldStorageKind.Static)
+                throw new InvalidDataException($"Layout evidence field '{field.Query.Name}' uses storage kind '{field.StorageKind}' instead of normal static storage.");
+
+            if (fieldAddresses.Add(field.FieldInfoAddress))
+                evidence.Add(field);
+        }
+
+        Il2CppClassLayoutDetectionResult detection = _classLayoutDetector.Detect(evidence);
+
+        _classLayout = detection.Layout;
+
+        return _classLayout;
+    }
+
+    /// <summary>
     /// Releases the target process owned by this resolution session.
     /// All runtime pointers and native resolution results associated with the session become invalid once the target process terminates or the session is disposed.
     /// </summary>
@@ -273,5 +434,6 @@ internal sealed class ResolutionSession : IDisposable
 
         _cache.Clear();
         _methodInfoLayout = null;
+        _classLayout = null;
     }
 }

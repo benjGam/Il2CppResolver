@@ -4,21 +4,31 @@ using Microsoft.Win32.SafeHandles;
 namespace UnityIl2CppResolver.Native.Memory;
 
 /// <summary>
-/// Provides the Win32 virtual-memory primitives required by the read-only process memory abstraction.
-/// This class contains interop declarations only and intentionally exposes no resolver-specific behavior.
+/// Provides the Win32 process-memory primitives required by the generic read-only memory inspection layer.
 /// </summary>
 internal static partial class NativeMethods
 {
     /// <summary>
-    /// Copies bytes from the virtual address space of a remote process into a local unmanaged buffer.
+    /// Copies memory from the target process into a local caller-provided buffer.
     /// </summary>
-    /// <param name="process">The native handle of the process whose memory should be read.</param>
-    /// <param name="baseAddress">The remote virtual address at which the read operation begins.</param>
-    /// <param name="buffer">The local unmanaged buffer that receives the copied bytes.</param>
-    /// <param name="size">The exact number of bytes requested from the target process.</param>
-    /// <param name="bytesRead">Receives the number of bytes actually copied into the destination buffer.</param>
-    /// <returns><see langword="true"/> when the native read operation succeeds; otherwise <see langword="false"/>.</returns>
-    [LibraryImport("kernel32.dll", SetLastError = true)]
+    /// <param name="process">The target process handle.</param>
+    /// <param name="baseAddress">The remote address from which bytes should be read.</param>
+    /// <param name="buffer">The local destination buffer.</param>
+    /// <param name="size">The number of bytes requested.</param>
+    /// <param name="bytesRead">Receives the number of bytes actually copied.</param>
+    /// <returns><see langword="true"/> when the read succeeds; otherwise <see langword="false"/>.</returns>
+    [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static unsafe partial bool ReadProcessMemory(SafeProcessHandle process, nint baseAddress, void* buffer, nuint size, out nuint bytesRead);
+    internal static extern unsafe bool ReadProcessMemory(SafeProcessHandle process, nint baseAddress, void* buffer, nuint size, out nuint bytesRead);
+
+    /// <summary>
+    /// Retrieves information about the virtual-memory region containing the specified remote address.
+    /// </summary>
+    /// <param name="process">The target process whose address space should be inspected.</param>
+    /// <param name="address">An address contained by the memory region to query.</param>
+    /// <param name="information">Receives the native memory-region description.</param>
+    /// <param name="informationLength">The size of the destination structure in bytes.</param>
+    /// <returns>The number of bytes written to <paramref name="information"/>, or zero when the query fails.</returns>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern nuint VirtualQueryEx(SafeProcessHandle process, nint address, out MemoryBasicInformation information, nuint informationLength);
 }

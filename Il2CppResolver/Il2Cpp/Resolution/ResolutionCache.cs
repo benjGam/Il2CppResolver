@@ -1,6 +1,7 @@
 ﻿using System.Text;
 using UnityIl2CppResolver.Il2Cpp.Queries;
 using UnityIl2CppResolver.Il2Cpp.Resolution.Model;
+using UnityIl2CppResolver.Il2Cpp.Runtime.Compatibility;
 
 namespace UnityIl2CppResolver.Il2Cpp.Resolution;
 
@@ -35,6 +36,11 @@ internal sealed class ResolutionCache
     /// Stores field resolution results indexed by their exact declaring type and field-name identity.
     /// </summary>
     private readonly Dictionary<string, ResolvedField> _fields = new(StringComparer.Ordinal);
+
+/// <summary>
+/// Stores validated static-field storage mappings indexed by both the target-specific <c>FieldInfo*</c> identity and the structural <c>Il2CppClass</c> layout used to produce the mapping.
+/// </summary>
+private readonly Dictionary<string, ResolvedFieldStorage> _fieldStorages = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Attempts to retrieve a previously resolved assembly for the exact supplied query.
@@ -159,6 +165,56 @@ internal sealed class ResolutionCache
     }
 
     /// <summary>
+    /// Attempts to retrieve a previously validated static-field storage mapping produced with the specified class layout.
+    /// The structural offsets form part of the cache identity so resolving the same field through different compatibility profiles cannot reuse incompatible storage evidence.
+    /// </summary>
+    /// <param name="fieldInfoAddress">The target-specific native <c>FieldInfo*</c> address.</param>
+    /// <param name="layout">The explicit <c>Il2CppClass</c> layout associated with the requested mapping.</param>
+    /// <param name="storage">Receives the cached storage mapping when one exists.</param>
+    /// <returns><see langword="true"/> when a compatible cached mapping exists; otherwise <see langword="false"/>.</returns>
+    public bool TryGetFieldStorage(nint fieldInfoAddress, Il2CppClassLayout layout, out ResolvedFieldStorage? storage)
+    {
+        if (fieldInfoAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(fieldInfoAddress), "The IL2CPP FieldInfo address cannot be zero.");
+
+        ArgumentNullException.ThrowIfNull(layout);
+
+        string key = BuildFieldStorageKey(fieldInfoAddress, layout);
+
+        return _fieldStorages.TryGetValue(key, out storage);
+    }
+
+    /// <summary>
+    /// Stores a validated static-field storage mapping using both its target-specific <c>FieldInfo*</c> identity and the structural layout that produced it.
+    /// </summary>
+    /// <param name="storage">The validated field storage mapping to cache.</param>
+    /// <param name="layout">The explicit class layout used to produce the mapping.</param>
+    public void StoreFieldStorage(ResolvedFieldStorage storage, Il2CppClassLayout layout)
+    {
+        ArgumentNullException.ThrowIfNull(storage);
+        ArgumentNullException.ThrowIfNull(layout);
+
+        string key = BuildFieldStorageKey(storage.Field.FieldInfoAddress, layout);
+
+        _fieldStorages[key] = storage;
+    }
+
+    /// <summary>
+    /// Builds the exact cache identity associated with a static-field storage mapping.
+    /// The layout name is intentionally excluded because structural offsets, rather than diagnostic labels, define compatibility.
+    /// </summary>
+    /// <param name="fieldInfoAddress">The target-specific native <c>FieldInfo*</c> address.</param>
+    /// <param name="layout">The class layout whose structural offsets form part of the mapping identity.</param>
+    /// <returns>A collision-safe cache key identifying one field under one exact structural layout.</returns>
+    private static string BuildFieldStorageKey(nint fieldInfoAddress, Il2CppClassLayout layout)
+    {
+        return BuildCompositeKey(
+            fieldInfoAddress.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture),
+            layout.StaticFieldsPointerOffset.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            layout.StaticFieldsSizeOffset.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
     /// Builds the exact cache identity associated with a field query.
     /// </summary>
     /// <param name="query">The semantic field query to encode.</param>
@@ -179,6 +235,7 @@ internal sealed class ResolutionCache
         _methods.Clear();
         _methodCodes.Clear();
         _fields.Clear();
+        _fieldStorages.Clear();
     }
 
     /// <summary>

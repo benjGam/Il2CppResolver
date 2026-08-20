@@ -1,5 +1,6 @@
 ﻿using UnityIl2CppResolver.Il2Cpp.Queries;
 using UnityIl2CppResolver.Il2Cpp.Resolution.Model;
+using UnityIl2CppResolver.Il2Cpp.Runtime.Compatibility;
 
 namespace UnityIl2CppResolver.Il2Cpp.Resolution;
 
@@ -121,6 +122,52 @@ public sealed class Il2CppResolver : IDisposable
     {
         ThrowIfDisposed();
         return _session.ResolveField(query);
+    }
+
+    /// <summary>
+    /// Resolves the concrete process storage of a normal static IL2CPP field.
+    /// The result exposes the declaring class static-data block, validated field-relative offset and calculated absolute storage address together with the compatibility profile used to interpret <c>Il2CppClass</c>.
+    /// Thread-static fields are intentionally unsupported by this operation.
+    /// </summary>
+    /// <param name="query">The semantic field query identifying the requested normal static field.</param>
+    /// <returns>The validated concrete static-field storage mapping.</returns>
+    /// <exception cref="NotSupportedException">
+    /// Thrown when the requested field uses thread-static storage.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the requested field is not a normal static field.
+    /// </exception>
+    public ResolvedFieldStorage ResolveFieldStorage(FieldQuery query)
+    {
+        ThrowIfDisposed();
+        return _session.ResolveFieldStorage(query);
+    }
+
+    /// <summary>
+    /// Resolves the concrete process storage of a normal static IL2CPP field and automatically detects the target <c>Il2CppClass</c> layout when no profile has yet been established.
+    /// Additional evidence fields must belong to enough independent declaring classes for a unique compatibility profile to satisfy the configured validation threshold.
+    /// </summary>
+    /// <param name="query">The semantic field query identifying the requested normal static field.</param>
+    /// <param name="layoutEvidenceQueries">Additional normal static fields used to establish multi-class structural evidence.</param>
+    /// <returns>The validated concrete static-field storage mapping.</returns>
+    public ResolvedFieldStorage ResolveFieldStorage(FieldQuery query, IReadOnlyList<FieldQuery> layoutEvidenceQueries)
+    {
+        ThrowIfDisposed();
+        return _session.ResolveFieldStorage(query, layoutEvidenceQueries);
+    }
+
+    /// <summary>
+    /// Resolves the concrete process storage of a normal static IL2CPP field using an explicitly selected <c>Il2CppClass</c> structural layout.
+    /// This overload bypasses automatic layout detection and is intended for consumers that already know the runtime layout of their target.
+    /// All normal storage validations remain active even when the layout is supplied explicitly.
+    /// </summary>
+    /// <param name="query">The semantic field query identifying the requested normal static field.</param>
+    /// <param name="layout">The explicit <c>Il2CppClass</c> layout used to interpret static storage.</param>
+    /// <returns>The validated concrete static-field storage mapping.</returns>
+    public ResolvedFieldStorage ResolveFieldStorage(FieldQuery query, Il2CppClassLayout layout)
+    {
+        ThrowIfDisposed();
+        return _session.ResolveFieldStorage(query, layout);
     }
 
     /// <summary>

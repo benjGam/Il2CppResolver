@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+﻿using Microsoft.Win32.SafeHandles;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 using UnityIl2CppResolver.Native.Process;
@@ -12,6 +13,57 @@ namespace UnityIl2CppResolver.Native.Memory;
 /// </summary>
 public sealed class ProcessMemory
 {
+    /// <summary>
+    /// Represents the Windows <c>MEM_COMMIT</c> state required for accessible virtual-memory pages.
+    /// </summary>
+    private const uint MemoryCommit = 0x00001000;
+
+    /// <summary>
+    /// Represents the Windows <c>PAGE_NOACCESS</c> protection.
+    /// </summary>
+    private const uint PageNoAccess = 0x00000001;
+
+    /// <summary>
+    /// Represents the Windows <c>PAGE_READONLY</c> protection.
+    /// </summary>
+    private const uint PageReadOnly = 0x00000002;
+
+    /// <summary>
+    /// Represents the Windows <c>PAGE_READWRITE</c> protection.
+    /// </summary>
+    private const uint PageReadWrite = 0x00000004;
+
+    /// <summary>
+    /// Represents the Windows <c>PAGE_WRITECOPY</c> protection.
+    /// </summary>
+    private const uint PageWriteCopy = 0x00000008;
+
+    /// <summary>
+    /// Represents the Windows <c>PAGE_EXECUTE_READ</c> protection.
+    /// </summary>
+    private const uint PageExecuteRead = 0x00000020;
+
+    /// <summary>
+    /// Represents the Windows <c>PAGE_EXECUTE_READWRITE</c> protection.
+    /// </summary>
+    private const uint PageExecuteReadWrite = 0x00000040;
+
+    /// <summary>
+    /// Represents the Windows <c>PAGE_EXECUTE_WRITECOPY</c> protection.
+    /// </summary>
+    private const uint PageExecuteWriteCopy = 0x00000080;
+
+    /// <summary>
+    /// Represents the Windows <c>PAGE_GUARD</c> protection modifier.
+    /// Guarded pages are deliberately rejected as stable readable storage.
+    /// </summary>
+    private const uint PageGuard = 0x00000100;
+
+    /// <summary>
+    /// Extracts the primary page-access mode from a Windows page-protection value while excluding modifier flags.
+    /// </summary>
+    private const uint PageProtectionMask = 0x000000FF;
+
     /// <summary>
     /// Represents the target process whose virtual memory is accessed by this instance.
     /// The process owns the native handle used by all read operations and therefore must remain alive and undisposed for the lifetime of this component.
@@ -247,5 +299,88 @@ public sealed class ProcessMemory
         }
 
         throw new InvalidDataException($"Remote UTF-8 string at address 0x{address:X} does not terminate within {maximumLength} byte(s).");
+    }
+
+    /// <summary>
+    /// Determines whether the complete specified virtual-memory range is currently backed by committed pages that permit ordinary read access.
+    /// The operation follows contiguous regions reported by <c>VirtualQueryEx</c> until the entire requested range has been validated.
+    /// </summary>
+    /// <param name="address">The first remote virtual address that must be readable.</param>
+    /// <param name="length">The number of consecutive bytes that must remain readable.</param>
+    /// <returns><see langword="true"/> when every byte belongs to committed readable memory; otherwise <see langword="false"/>.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="address"/> is zero, <paramref name="length"/> is zero or the requested address range overflows the native address space.
+    /// </exception>
+    /// <exception cref="Win32Exception">
+    /// Thrown when the operating system cannot query the target process virtual-memory map.
+    /// </exception>
+    public bool IsReadableRange(nint address, nuint length)
+    {
+        ValidateAddress(address);
+
+        if (length == 0)
+            throw new ArgumentOutOfRangeException(nameof(length), "The readable range length cannot be zero.");
+
+        _target.ThrowIfExited();
+
+        ulong startAddress = unchecked((ulong)(nuint)address);
+        ulong lengthValue = (ulong)length;
+
+        if (lengthValue > ulong.MaxValue - startAddress)
+            throw new ArgumentOutOfRangeException(nameof(length), "The requested readable range exceeds the native address space.");
+
+        ulong endAddress = startAddress + lengthValue;
+        ulong currentAddress = startAddress;
+        nuint informationSize = (nuint)Marshal.SizeOf<MemoryBasicInformation>();
+
+        using SafeProcessHandle queryHandle = _target.OpenAdditionalHandle(ProcessAccessRights.QueryInformation);
+
+        while (currentAddress < endAddress)
+        {
+            nint queryAddress = unchecked((nint)(nuint)currentAddress);
+            nuint result = NativeMethods.VirtualQueryEx(queryHandle, queryAddress, out MemoryBasicInformation information, informationSize);
+
+            if (result == 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), $"Unable to query remote memory at address 0x{queryAddress:X}.");
+
+            if (information.State != MemoryCommit || !IsReadableProtection(information.Protect))
+                return false;
+
+            ulong regionBase = unchecked((ulong)(nuint)information.BaseAddress);
+            ulong regionSize = (ulong)information.RegionSize;
+
+            if (regionSize == 0 || regionSize > ulong.MaxValue - regionBase)
+                return false;
+
+            ulong regionEnd = regionBase + regionSize;
+
+            if (currentAddress < regionBase || currentAddress >= regionEnd)
+                return false;
+
+            currentAddress = Math.Min(regionEnd, endAddress);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Determines whether a Windows page-protection value permits stable read access.
+    /// Guard pages, inaccessible pages and execute-only pages are rejected.
+    /// </summary>
+    /// <param name="protection">The native Windows page-protection value to inspect.</param>
+    /// <returns><see langword="true"/> when ordinary memory reads are permitted; otherwise <see langword="false"/>.</returns>
+    private static bool IsReadableProtection(uint protection)
+    {
+        if ((protection & PageGuard) != 0)
+            return false;
+
+        uint baseProtection = protection & PageProtectionMask;
+
+        return baseProtection == PageReadOnly ||
+               baseProtection == PageReadWrite ||
+               baseProtection == PageWriteCopy ||
+               baseProtection == PageExecuteRead ||
+               baseProtection == PageExecuteReadWrite ||
+               baseProtection == PageExecuteWriteCopy;
     }
 }
