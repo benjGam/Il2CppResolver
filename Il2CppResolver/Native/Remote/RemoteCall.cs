@@ -25,6 +25,16 @@ internal sealed class RemoteCall
     private const uint MaximumFiniteTimeout = 0xFFFFFFFE;
 
     /// <summary>
+    /// Represents the exact size in bytes of the x64 trampoline generated for a function receiving one pointer argument and one pointer-sized output argument.
+    /// </summary>
+    private const int PointerSizeOutTrampolineSize = 56;
+
+    /// <summary>
+    /// Represents the size in bytes of the remote result block containing both the native return value and the pointer-sized output value.
+    /// </summary>
+    private const int PointerSizeOutResultSize = 16;
+
+    /// <summary>
     /// Represents the target process in which native functions are executed.
     /// The primary process handle remains read-only; stronger execution rights are obtained through short-lived secondary handles.
     /// </summary>
@@ -208,5 +218,188 @@ internal sealed class RemoteCall
             throw new ArgumentOutOfRangeException(nameof(timeout), "The remote call timeout must represent a positive finite duration supported by WaitForSingleObject.");
 
         return checked((uint)Math.Ceiling(totalMilliseconds));
+    }
+
+    /// <summary>
+    /// Invokes a native x64 function receiving one pointer argument and one pointer-sized output argument.
+    /// The output storage is owned entirely by this operation so it can remain allocated when remote thread termination cannot be proven.
+    /// </summary>
+    /// <param name="functionAddress">The validated remote address of the native function to invoke.</param>
+    /// <param name="argument">The pointer-sized value passed through the x64 <c>RCX</c> register.</param>
+    /// <param name="timeout">The maximum amount of time allowed for the remote thread to terminate.</param>
+    /// <returns>The native function return value, output value and completed remote thread exit code.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="functionAddress"/> is zero or when <paramref name="timeout"/> is outside the supported finite range.
+    /// </exception>
+    /// <exception cref="TimeoutException">
+    /// Thrown when the remote thread does not terminate within the requested timeout.
+    /// </exception>
+    /// <exception cref="Win32Exception">
+    /// Thrown when a native remote execution operation fails.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the generated trampoline terminates abnormally.
+    /// </exception>
+    public RemoteCallPointerSizeOutResult InvokePointerWithNuintOutArgument(nint functionAddress, nint argument, TimeSpan timeout)
+    {
+        if (functionAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(functionAddress), "The remote function address cannot be zero.");
+
+        uint timeoutMilliseconds = ConvertTimeout(timeout);
+
+        ProcessAccessRights accessRights = ProcessAccessRights.CreateThread |
+                                           ProcessAccessRights.QueryInformation |
+                                           ProcessAccessRights.VirtualMemoryOperation |
+                                           ProcessAccessRights.VirtualMemoryWrite |
+                                           ProcessAccessRights.VirtualMemoryRead;
+
+        using SafeProcessHandle executionHandle = _target.OpenAdditionalHandle(accessRights);
+        using RemoteAllocation resultAllocation = RemoteAllocation.Allocate(executionHandle, PointerSizeOutResultSize, MemoryProtection.ReadWrite);
+        using RemoteAllocation codeAllocation = RemoteAllocation.Allocate(executionHandle, PointerSizeOutTrampolineSize, MemoryProtection.ReadWrite);
+
+        nint outValueAddress = resultAllocation.Address + sizeof(long);
+        byte[] trampoline = BuildPointerSizeOutTrampoline(functionAddress, argument, resultAllocation.Address, outValueAddress);
+
+        codeAllocation.Write(trampoline);
+        codeAllocation.Protect(MemoryProtection.ExecuteRead);
+
+        uint exitCode = ExecuteTrampoline(executionHandle, codeAllocation, resultAllocation, functionAddress, timeoutMilliseconds);
+
+        nint returnValue = _memory.ReadPointer(resultAllocation.Address);
+        nuint outValue = _memory.Read<nuint>(outValueAddress);
+
+        return new RemoteCallPointerSizeOutResult(returnValue, outValue, exitCode);
+    }
+
+    /// <summary>
+    /// Builds the Windows x64 trampoline used to invoke a function receiving one pointer argument and one pointer-sized output argument.
+    /// The generated code passes the first argument through <c>RCX</c>, passes remote output storage through <c>RDX</c>, captures <c>RAX</c> and exits cleanly.
+    /// </summary>
+    /// <param name="functionAddress">The remote native function address to invoke.</param>
+    /// <param name="argument">The pointer-sized value passed through <c>RCX</c>.</param>
+    /// <param name="resultAddress">The remote address that receives the native return value.</param>
+    /// <param name="outValueAddress">The remote address passed through <c>RDX</c> for the pointer-sized output value.</param>
+    /// <returns>The complete generated x64 machine-code sequence.</returns>
+    private static byte[] BuildPointerSizeOutTrampoline(nint functionAddress, nint argument, nint resultAddress, nint outValueAddress)
+    {
+        byte[] code = new byte[PointerSizeOutTrampolineSize];
+        int offset = 0;
+
+        code[offset++] = 0x48;
+        code[offset++] = 0x83;
+        code[offset++] = 0xEC;
+        code[offset++] = 0x28;
+
+        code[offset++] = 0x48;
+        code[offset++] = 0xB9;
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(offset, sizeof(long)), argument.ToInt64());
+        offset += sizeof(long);
+
+        code[offset++] = 0x48;
+        code[offset++] = 0xBA;
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(offset, sizeof(long)), outValueAddress.ToInt64());
+        offset += sizeof(long);
+
+        code[offset++] = 0x48;
+        code[offset++] = 0xB8;
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(offset, sizeof(long)), functionAddress.ToInt64());
+        offset += sizeof(long);
+
+        code[offset++] = 0xFF;
+        code[offset++] = 0xD0;
+
+        code[offset++] = 0x48;
+        code[offset++] = 0xBA;
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(offset, sizeof(long)), resultAddress.ToInt64());
+        offset += sizeof(long);
+
+        code[offset++] = 0x48;
+        code[offset++] = 0x89;
+        code[offset++] = 0x02;
+
+        code[offset++] = 0x31;
+        code[offset++] = 0xC0;
+
+        code[offset++] = 0x48;
+        code[offset++] = 0x83;
+        code[offset++] = 0xC4;
+        code[offset++] = 0x28;
+
+        code[offset++] = 0xC3;
+
+        if (offset != PointerSizeOutTrampolineSize)
+            throw new InvalidOperationException($"Generated x64 trampoline size is {offset} byte(s), but {PointerSizeOutTrampolineSize} byte(s) were expected.");
+
+        return code;
+    }
+
+    /// <summary>
+    /// Executes an already initialized remote trampoline and waits until its thread has provably terminated.
+    /// When termination cannot be proven, all remote allocations potentially referenced by the thread are deliberately abandoned to prevent use-after-free conditions inside the target process.
+    /// </summary>
+    /// <param name="executionHandle">The process handle owning the remote executable allocations.</param>
+    /// <param name="codeAllocation">The remote allocation containing the generated executable trampoline.</param>
+    /// <param name="resultAllocation">The remote allocation containing the call result and associated temporary output storage.</param>
+    /// <param name="functionAddress">The native function address used for diagnostic information.</param>
+    /// <param name="timeoutMilliseconds">The finite native timeout applied to the remote thread wait operation.</param>
+    /// <returns>The exit code reported by the completed remote trampoline thread.</returns>
+    /// <exception cref="TimeoutException">
+    /// Thrown when thread termination cannot be observed before the timeout expires.
+    /// </exception>
+    /// <exception cref="Win32Exception">
+    /// Thrown when instruction cache synchronization, thread creation, synchronization or exit-code retrieval fails.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the wait operation returns an unexpected state or when the trampoline terminates with a non-zero exit code.
+    /// </exception>
+    private uint ExecuteTrampoline(SafeProcessHandle executionHandle, RemoteAllocation codeAllocation, RemoteAllocation resultAllocation, nint functionAddress, uint timeoutMilliseconds)
+    {
+        bool instructionCacheFlushed = NativeMethods.FlushInstructionCache(executionHandle, codeAllocation.Address, codeAllocation.Size);
+
+        if (!instructionCacheFlushed)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), $"Unable to flush the instruction cache for remote trampoline 0x{codeAllocation.Address:X}.");
+
+        using SafeThreadHandle thread = NativeMethods.CreateRemoteThread(executionHandle, 0, 0, codeAllocation.Address, 0, 0, out uint _);
+
+        if (thread.IsInvalid)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), $"Unable to create a remote thread in process {_target.ProcessId}.");
+
+        uint waitResult = NativeMethods.WaitForSingleObject(thread, timeoutMilliseconds);
+
+        if (waitResult == NativeMethods.WaitTimeout)
+        {
+            codeAllocation.Abandon();
+            resultAllocation.Abandon();
+
+            throw new TimeoutException($"Remote function call at 0x{functionAddress:X} did not complete before the configured timeout. Remote allocations were intentionally retained because thread termination could not be proven.");
+        }
+
+        if (waitResult == NativeMethods.WaitFailed)
+        {
+            int errorCode = Marshal.GetLastWin32Error();
+
+            codeAllocation.Abandon();
+            resultAllocation.Abandon();
+
+            throw new Win32Exception(errorCode, $"Unable to wait for the remote thread executing function 0x{functionAddress:X}. Remote allocations were intentionally retained because thread termination could not be proven.");
+        }
+
+        if (waitResult != NativeMethods.WaitObject0)
+        {
+            codeAllocation.Abandon();
+            resultAllocation.Abandon();
+
+            throw new InvalidOperationException($"Unexpected wait result 0x{waitResult:X8} while executing remote function 0x{functionAddress:X}.");
+        }
+
+        bool exitCodeRead = NativeMethods.GetExitCodeThread(thread, out uint exitCode);
+
+        if (!exitCodeRead)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), $"Unable to retrieve the exit code of the remote thread executing function 0x{functionAddress:X}.");
+
+        if (exitCode != 0)
+            throw new InvalidOperationException($"Remote trampoline executing function 0x{functionAddress:X} terminated with exit code 0x{exitCode:X8}.");
+
+        return exitCode;
     }
 }
