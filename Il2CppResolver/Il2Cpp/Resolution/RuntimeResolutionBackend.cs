@@ -236,4 +236,78 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
 
         return normalized;
     }
+
+    /// <summary>
+    /// Resolves a managed field by exact declaring type and field name.
+    /// Candidate fields are enumerated from the declaring IL2CPP class and the matching field is inspected to determine its semantic type, metadata attributes and storage category.
+    /// </summary>
+    /// <param name="query">The semantic field query to resolve.</param>
+    /// <returns>The unique runtime field matching the requested declaring type and name.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="query"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="KeyNotFoundException">
+    /// Thrown when the requested field does not exist on the declaring runtime type.
+    /// </exception>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when multiple fields unexpectedly match the same name.
+    /// </exception>
+    public ResolvedField ResolveField(FieldQuery query)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        if (_cache.TryGetField(query, out ResolvedField? cachedField))
+            return cachedField;
+
+        ResolvedType declaringType = ResolveType(query.DeclaringType);
+        IReadOnlyList<nint> fields = _runtime.GetFields(declaringType.ClassAddress, _callTimeout);
+        Il2CppFieldInfo? match = null;
+
+        foreach (nint fieldAddress in fields)
+        {
+            string fieldName = _runtime.GetFieldName(fieldAddress, _callTimeout);
+
+            if (!string.Equals(fieldName, query.Name, StringComparison.Ordinal))
+                continue;
+
+            Il2CppFieldInfo field = _runtime.GetFieldInfo(fieldAddress, _callTimeout);
+
+            if (match is not null)
+                throw new InvalidDataException($"Multiple IL2CPP fields named '{query.Name}' were found on declaring type '{query.DeclaringType.Namespace}.{query.DeclaringType.Name}'.");
+
+            match = field;
+        }
+
+        if (match is null)
+            throw new KeyNotFoundException($"IL2CPP field '{query.DeclaringType.Namespace}.{query.DeclaringType.Name}.{query.Name}' was not found.");
+
+        FieldStorageKind storageKind;
+        nuint? instanceOffset = null;
+        nuint? staticStorageOffset = null;
+
+        if (match.IsLiteral)
+        {
+            storageKind = FieldStorageKind.Literal;
+        }
+        else if (match.IsThreadStatic)
+        {
+            storageKind = FieldStorageKind.ThreadStatic;
+        }
+        else if (match.IsStatic)
+        {
+            storageKind = FieldStorageKind.Static;
+            staticStorageOffset = match.Offset;
+        }
+        else
+        {
+            storageKind = FieldStorageKind.Instance;
+            instanceOffset = match.Offset;
+        }
+
+        ResolvedField result = new(query, declaringType, match.FieldAddress, match.TypeName, match.Attributes, storageKind, instanceOffset, staticStorageOffset);
+
+        _cache.StoreField(result);
+
+        return result;
+    }
 }

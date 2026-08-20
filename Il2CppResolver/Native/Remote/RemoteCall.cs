@@ -792,6 +792,31 @@ internal sealed class RemoteCall
         foreach (RemoteAllocation allocation in referencedAllocations)
             allocation.Abandon();
     }
+    /// <summary>
+    /// Invokes a native function receiving one pointer argument and returns its pointer-sized unsigned result.
+    /// This wrapper preserves every native result bit and is suitable for functions returning <c>size_t</c>.
+    /// </summary>
+    /// <param name="functionAddress">The remote native function address to invoke.</param>
+    /// <param name="argument">The pointer-sized argument supplied through <c>RCX</c>.</param>
+    /// <param name="timeout">The maximum amount of time allowed for execution.</param>
+    /// <returns>The complete pointer-sized unsigned value returned by the native function.</returns>
+    public nuint InvokeNuint(nint functionAddress, nint argument, TimeSpan timeout)
+    {
+        RemoteCallResult result = InvokePointer(functionAddress, argument, timeout);
+        return unchecked((nuint)(ulong)result.ReturnValue.ToInt64());
+    }
 
+    /// <summary>
+    /// Invokes a native function receiving one pointer argument and returns its signed 32-bit result.
+    /// </summary>
+    /// <param name="functionAddress">The remote native function address to invoke.</param>
+    /// <param name="argument">The pointer-sized argument supplied through <c>RCX</c>.</param>
+    /// <param name="timeout">The maximum amount of time allowed for execution.</param>
+    /// <returns>The signed 32-bit value returned through <c>EAX</c>.</returns>
+    public int InvokeInt32(nint functionAddress, nint argument, TimeSpan timeout)
+    {
+        RemoteCallResult result = InvokePointer(functionAddress, argument, timeout);
+        return unchecked((int)(uint)result.ReturnValue.ToInt64());
+    }
 
 }

@@ -40,6 +40,11 @@ internal sealed class Il2CppRuntime
     private const int MaximumRuntimeNameLength = 4096;
 
     /// <summary>
+    /// Defines the defensive maximum number of fields accepted while enumerating a single IL2CPP class.
+    /// </summary>
+    private const int MaximumFieldCount = 65536;
+
+    /// <summary>
     /// Represents the validated IL2CPP target whose native runtime is inspected by this instance.
     /// </summary>
     private readonly Il2CppTarget _target;
@@ -371,6 +376,95 @@ internal sealed class Il2CppRuntime
             throw new InvalidDataException($"IL2CPP returned an empty semantic name for type 0x{typeAddress:X}.");
 
         return name;
+    }
+
+    /// <summary>
+    /// Retrieves the native fields declared by the specified IL2CPP class.
+    /// Enumeration follows the iterator contract exposed by <c>il2cpp_class_get_fields</c>.
+    /// </summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> whose fields should be enumerated.</param>
+    /// <param name="timeout">The maximum amount of time allowed for each individual runtime call.</param>
+    /// <returns>An immutable snapshot containing the discovered native <c>FieldInfo*</c> addresses.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="classAddress"/> is zero.
+    /// </exception>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the runtime iterator fails to progress or exceeds the defensive field-count limit.
+    /// </exception>
+    public IReadOnlyList<nint> GetFields(nint classAddress, TimeSpan timeout)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class pointer cannot be zero.");
+
+        List<nint> fields = new();
+        nuint iterator = 0;
+
+        while (fields.Count < MaximumFieldCount)
+        {
+            nuint previousIterator = iterator;
+            RemoteCallPointerSizeOutResult result = _remoteCall.InvokePointerWithNuintRefArgument(_exports.ClassGetFields, classAddress, iterator, timeout);
+            iterator = result.OutValue;
+
+            if (result.ReturnValue == 0)
+                return fields.AsReadOnly();
+
+            if (previousIterator != 0 && iterator == previousIterator)
+                throw new InvalidDataException($"IL2CPP field enumeration for class 0x{classAddress:X} returned a field without advancing its iterator.");
+
+            fields.Add(result.ReturnValue);
+        }
+
+        throw new InvalidDataException($"IL2CPP field enumeration for class 0x{classAddress:X} exceeded the defensive limit of {MaximumFieldCount} fields.");
+    }
+
+    /// <summary>
+    /// Retrieves the semantic name associated with a runtime <c>FieldInfo</c>.
+    /// </summary>
+    /// <param name="fieldAddress">The native <c>FieldInfo*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The managed field name exposed by IL2CPP.</returns>
+    public string GetFieldName(nint fieldAddress, TimeSpan timeout)
+    {
+        if (fieldAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(fieldAddress), "The IL2CPP field pointer cannot be zero.");
+
+        RemoteCallResult result = _remoteCall.InvokePointer(_exports.FieldGetName, fieldAddress, timeout);
+
+        if (result.ReturnValue == 0)
+            throw new InvalidDataException($"IL2CPP returned a null name pointer for field 0x{fieldAddress:X}.");
+
+        string name = _target.Memory.ReadNullTerminatedUtf8(result.ReturnValue, MaximumRuntimeNameLength);
+
+        if (string.IsNullOrWhiteSpace(name))
+            throw new InvalidDataException($"IL2CPP returned an empty name for field 0x{fieldAddress:X}.");
+
+        return name;
+    }
+
+    /// <summary>
+    /// Retrieves the complete semantic and storage description of a runtime <c>FieldInfo</c>.
+    /// The operation resolves the field name, managed type, metadata attributes and raw IL2CPP storage offset without interpreting static storage as an absolute address.
+    /// </summary>
+    /// <param name="fieldAddress">The native <c>FieldInfo*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
+    /// <returns>A semantic runtime description of the requested field.</returns>
+    public Il2CppFieldInfo GetFieldInfo(nint fieldAddress, TimeSpan timeout)
+    {
+        if (fieldAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(fieldAddress), "The IL2CPP field pointer cannot be zero.");
+
+        string name = GetFieldName(fieldAddress, timeout);
+
+        RemoteCallResult typeResult = _remoteCall.InvokePointer(_exports.FieldGetType, fieldAddress, timeout);
+
+        if (typeResult.ReturnValue == 0)
+            throw new InvalidDataException($"IL2CPP returned a null type for field 0x{fieldAddress:X}.");
+
+        string typeName = GetTypeName(typeResult.ReturnValue, timeout);
+        int rawAttributes = _remoteCall.InvokeInt32(_exports.FieldGetFlags, fieldAddress, timeout);
+        nuint offset = _remoteCall.InvokeNuint(_exports.FieldGetOffset, fieldAddress, timeout);
+
+        return new Il2CppFieldInfo(fieldAddress, name, typeName, (System.Reflection.FieldAttributes)rawAttributes, offset);
     }
 
     /// <summary>

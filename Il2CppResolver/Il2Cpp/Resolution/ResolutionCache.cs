@@ -32,6 +32,11 @@ internal sealed class ResolutionCache
     private readonly Dictionary<nint, ResolvedMethodCode> _methodCodes = new();
 
     /// <summary>
+    /// Stores field resolution results indexed by their exact declaring type and field-name identity.
+    /// </summary>
+    private readonly Dictionary<string, ResolvedField> _fields = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// Attempts to retrieve a previously resolved assembly for the exact supplied query.
     /// </summary>
     /// <param name="query">The semantic assembly query whose cached result should be located.</param>
@@ -130,6 +135,40 @@ internal sealed class ResolutionCache
     }
 
     /// <summary>
+    /// Attempts to retrieve a previously resolved field for the exact supplied semantic query.
+    /// </summary>
+    /// <param name="query">The semantic field query whose cached result should be located.</param>
+    /// <param name="field">Receives the cached field when one exists.</param>
+    /// <returns><see langword="true"/> when a cached result exists; otherwise <see langword="false"/>.</returns>
+    public bool TryGetField(FieldQuery query, out ResolvedField? field)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        return _fields.TryGetValue(BuildFieldKey(query), out field);
+    }
+
+    /// <summary>
+    /// Stores a successfully resolved field using its exact declaring type and field name.
+    /// </summary>
+    /// <param name="field">The resolved field to cache.</param>
+    public void StoreField(ResolvedField field)
+    {
+        ArgumentNullException.ThrowIfNull(field);
+
+        _fields[BuildFieldKey(field.Query)] = field;
+    }
+
+    /// <summary>
+    /// Builds the exact cache identity associated with a field query.
+    /// </summary>
+    /// <param name="query">The semantic field query to encode.</param>
+    /// <returns>A collision-safe cache key preserving the complete requested field identity.</returns>
+    private static string BuildFieldKey(FieldQuery query)
+    {
+        return BuildCompositeKey(query.DeclaringType.Assembly.Name, query.DeclaringType.Namespace, query.DeclaringType.Name, query.Name);
+    }
+
+    /// <summary>
     /// Removes every semantic and native resolution result currently associated with the session.
     /// Subsequent resolver operations will interrogate the target runtime again and repopulate the cache from fresh evidence.
     /// </summary>
@@ -139,6 +178,7 @@ internal sealed class ResolutionCache
         _types.Clear();
         _methods.Clear();
         _methodCodes.Clear();
+        _fields.Clear();
     }
 
     /// <summary>

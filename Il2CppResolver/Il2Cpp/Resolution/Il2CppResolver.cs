@@ -112,6 +112,18 @@ public sealed class Il2CppResolver : IDisposable
     }
 
     /// <summary>
+    /// Resolves a managed field from its declaring type and field name.
+    /// The result exposes the live IL2CPP <c>FieldInfo</c>, semantic field type and storage interpretation without manufacturing an absolute address for static or thread-static data.
+    /// </summary>
+    /// <param name="query">The semantic field query to resolve.</param>
+    /// <returns>The resolved runtime field and its storage characteristics.</returns>
+    public ResolvedField ResolveField(FieldQuery query)
+    {
+        ThrowIfDisposed();
+        return _session.ResolveField(query);
+    }
+
+    /// <summary>
     /// Releases the complete target-specific resolution session and its owned native process handle.
     /// </summary>
     public void Dispose()

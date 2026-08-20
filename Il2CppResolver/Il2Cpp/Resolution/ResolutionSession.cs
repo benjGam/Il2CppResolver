@@ -229,6 +229,17 @@ internal sealed class ResolutionSession : IDisposable
     }
 
     /// <summary>
+    /// Resolves a managed field through the active semantic backend.
+    /// </summary>
+    /// <param name="query">The semantic field identity to resolve.</param>
+    /// <returns>The resolved IL2CPP field and its storage characteristics.</returns>
+    public ResolvedField ResolveField(FieldQuery query)
+    {
+        ThrowIfDisposed();
+        return _backend.ResolveField(query);
+    }
+
+    /// <summary>
     /// Releases the target process owned by this resolution session.
     /// All runtime pointers and native resolution results associated with the session become invalid once the target process terminates or the session is disposed.
     /// </summary>

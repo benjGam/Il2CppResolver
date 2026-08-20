@@ -29,4 +29,11 @@ internal interface IIl2CppResolutionBackend
     /// <param name="query">The complete semantic method signature to resolve.</param>
     /// <returns>The resolved method and its verified runtime signature.</returns>
     ResolvedMethod ResolveMethod(MethodQuery query);
+
+    /// <summary>
+    /// Resolves a semantic field query to a concrete IL2CPP field identity and storage description.
+    /// </summary>
+    /// <param name="query">The semantic field identity to resolve.</param>
+    /// <returns>The resolved field and its runtime storage characteristics.</returns>
+    ResolvedField ResolveField(FieldQuery query);
 }

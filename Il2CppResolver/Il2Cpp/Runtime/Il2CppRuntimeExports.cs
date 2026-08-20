@@ -71,9 +71,35 @@ internal sealed class Il2CppRuntimeExports
     private const string TypeGetNameExportName = "il2cpp_type_get_name";
 
     /// <summary>
+    /// Defines the exported IL2CPP function used to enumerate fields declared by a class.
+    /// </summary>
+    private const string ClassGetFieldsExportName = "il2cpp_class_get_fields";
+
+    /// <summary>
+    /// Defines the exported IL2CPP function used to retrieve the semantic name of a field.
+    /// </summary>
+    private const string FieldGetNameExportName = "il2cpp_field_get_name";
+
+    /// <summary>
+    /// Defines the exported IL2CPP function used to retrieve the managed type associated with a field.
+    /// </summary>
+    private const string FieldGetTypeExportName = "il2cpp_field_get_type";
+
+    /// <summary>
+    /// Defines the exported IL2CPP function used to retrieve the metadata attributes associated with a field.
+    /// </summary>
+    private const string FieldGetFlagsExportName = "il2cpp_field_get_flags";
+
+    /// <summary>
+    /// Defines the exported IL2CPP function used to retrieve the runtime storage offset associated with a field.
+    /// </summary>
+    private const string FieldGetOffsetExportName = "il2cpp_field_get_offset";
+
+    /// <summary>
     /// Defines the exported IL2CPP function used to release memory allocated by IL2CPP APIs.
     /// </summary>
     private const string FreeExportName = "il2cpp_free";
+
 
     /// <summary>
     /// Gets the native address of <c>il2cpp_domain_get</c>.
@@ -144,6 +170,31 @@ internal sealed class Il2CppRuntimeExports
     public nint TypeGetName { get; }
 
     /// <summary>
+    /// Gets the native address of <c>il2cpp_class_get_fields</c>.
+    /// </summary>
+    public nint ClassGetFields { get; }
+
+    /// <summary>
+    /// Gets the native address of <c>il2cpp_field_get_name</c>.
+    /// </summary>
+    public nint FieldGetName { get; }
+
+    /// <summary>
+    /// Gets the native address of <c>il2cpp_field_get_type</c>.
+    /// </summary>
+    public nint FieldGetType { get; }
+
+    /// <summary>
+    /// Gets the native address of <c>il2cpp_field_get_flags</c>.
+    /// </summary>
+    public nint FieldGetFlags { get; }
+
+    /// <summary>
+    /// Gets the native address of <c>il2cpp_field_get_offset</c>.
+    /// </summary>
+    public nint FieldGetOffset { get; }
+
+    /// <summary>
     /// Gets the native address of <c>il2cpp_free</c>.
     /// </summary>
     public nint Free { get; }
@@ -170,6 +221,11 @@ internal sealed class Il2CppRuntimeExports
         nint methodGetParamCount,
         nint methodGetParam,
         nint methodGetReturnType,
+        nint classGetFields,
+        nint fieldGetName,
+        nint fieldGetType,
+        nint fieldGetFlags,
+        nint fieldGetOffset,
         nint typeGetName,
         nint free)
     {
@@ -184,6 +240,11 @@ internal sealed class Il2CppRuntimeExports
         MethodGetParamCount = methodGetParamCount;
         MethodGetParam = methodGetParam;
         MethodGetReturnType = methodGetReturnType;
+        ClassGetFields = classGetFields;
+        FieldGetName = fieldGetName;
+        FieldGetType = fieldGetType;
+        FieldGetFlags = fieldGetFlags;
+        FieldGetOffset = fieldGetOffset;
         TypeGetName = typeGetName;
         Free = free;
     }
@@ -218,6 +279,11 @@ internal sealed class Il2CppRuntimeExports
         nint methodGetParam = ResolveRequiredExport(image, MethodGetParamExportName);
         nint methodGetReturnType = ResolveRequiredExport(image, MethodGetReturnTypeExportName);
         nint typeGetName = ResolveRequiredExport(image, TypeGetNameExportName);
+        nint classGetFields = ResolveRequiredExport(image, ClassGetFieldsExportName);
+        nint fieldGetName = ResolveRequiredExport(image, FieldGetNameExportName);
+        nint fieldGetType = ResolveRequiredExport(image, FieldGetTypeExportName);
+        nint fieldGetFlags = ResolveRequiredExport(image, FieldGetFlagsExportName);
+        nint fieldGetOffset = ResolveRequiredExport(image, FieldGetOffsetExportName);
         nint free = ResolveRequiredExport(image, FreeExportName);
 
         return new Il2CppRuntimeExports(
@@ -232,6 +298,11 @@ internal sealed class Il2CppRuntimeExports
             methodGetParamCount,
             methodGetParam,
             methodGetReturnType,
+            classGetFields,
+            fieldGetName,
+            fieldGetType,
+            fieldGetFlags,
+            fieldGetOffset,
             typeGetName,
             free);
     }
