@@ -158,4 +158,49 @@ public sealed class ProcessMemory
         if (address == 0)
             throw new ArgumentOutOfRangeException(nameof(address), "The remote memory address cannot be zero.");
     }
+
+    /// <summary>
+    /// Reads a null-terminated ASCII string from the specified virtual address in the target process.
+    /// The operation reads one byte at a time until a null terminator is encountered or the configured maximum length is reached.
+    /// This conservative approach avoids reading beyond the valid memory range containing the remote string.
+    /// </summary>
+    /// <param name="address">The remote virtual address containing the first character of the ASCII string.</param>
+    /// <param name="maximumLength">The maximum number of non-null characters accepted before the remote data is considered invalid.</param>
+    /// <returns>The decoded ASCII string without its terminating null character.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="address"/> is zero or when <paramref name="maximumLength"/> is less than or equal to zero.
+    /// </exception>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the remote string is empty or does not contain a null terminator within <paramref name="maximumLength"/> bytes.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the target process has terminated.
+    /// </exception>
+    /// <exception cref="Win32Exception">
+    /// Thrown when the operating system cannot read one of the requested remote bytes.
+    /// </exception>
+    public string ReadNullTerminatedAscii(nint address, int maximumLength)
+    {
+        ValidateAddress(address);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumLength);
+
+        List<byte> bytes = new(Math.Min(maximumLength, 256));
+
+        for (int index = 0; index < maximumLength; index++)
+        {
+            byte value = Read<byte>(address + index);
+
+            if (value == 0)
+            {
+                if (bytes.Count == 0)
+                    throw new InvalidDataException($"Remote ASCII string at address 0x{address:X} is empty.");
+
+                return System.Text.Encoding.ASCII.GetString(bytes.ToArray());
+            }
+
+            bytes.Add(value);
+        }
+
+        throw new InvalidDataException($"Remote ASCII string at address 0x{address:X} does not terminate within {maximumLength} byte(s).");
+    }
 }

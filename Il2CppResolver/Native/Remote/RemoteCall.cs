@@ -35,9 +35,16 @@ internal sealed class RemoteCall
     private const int PointerSizeOutResultSize = 16;
 
     /// <summary>
+    /// Represents the exact size in bytes of the x64 trampoline generated for a function receiving one pointer-sized argument and returning a pointer-sized value.
+    /// </summary>
+    private const int PointerArgumentTrampolineSize = 46;
+
+    /// <summary>
     /// Represents the target process in which native functions are executed.
     /// The primary process handle remains read-only; stronger execution rights are obtained through short-lived secondary handles.
     /// </summary>
+    /// 
+
     private readonly TargetProcess _target;
 
     /// <summary>
@@ -153,6 +160,54 @@ internal sealed class RemoteCall
     }
 
     /// <summary>
+    /// Invokes a native x64 function receiving one pointer-sized argument and captures the complete pointer-sized value returned through <c>RAX</c>.
+    /// The supplied argument is passed through the Windows x64 <c>RCX</c> register and the returned value is persisted into a short-lived remote result allocation.
+    /// </summary>
+    /// <param name="functionAddress">The validated remote address of the native function to invoke.</param>
+    /// <param name="argument">The pointer-sized value passed to the native function through <c>RCX</c>.</param>
+    /// <param name="timeout">The maximum amount of time allowed for the remote thread to terminate.</param>
+    /// <returns>The native function return value together with the completed remote thread exit code.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="functionAddress"/> is zero or when <paramref name="timeout"/> is outside the supported finite wait range.
+    /// </exception>
+    /// <exception cref="TimeoutException">
+    /// Thrown when the remote thread does not terminate within the requested timeout.
+    /// </exception>
+    /// <exception cref="Win32Exception">
+    /// Thrown when a native remote execution operation fails.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the generated trampoline terminates abnormally.
+    /// </exception>
+    public RemoteCallResult InvokePointer(nint functionAddress, nint argument, TimeSpan timeout)
+    {
+        if (functionAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(functionAddress), "The remote function address cannot be zero.");
+
+        uint timeoutMilliseconds = ConvertTimeout(timeout);
+
+        ProcessAccessRights accessRights = ProcessAccessRights.CreateThread |
+                                           ProcessAccessRights.QueryInformation |
+                                           ProcessAccessRights.VirtualMemoryOperation |
+                                           ProcessAccessRights.VirtualMemoryWrite |
+                                           ProcessAccessRights.VirtualMemoryRead;
+
+        using SafeProcessHandle executionHandle = _target.OpenAdditionalHandle(accessRights);
+        using RemoteAllocation resultAllocation = RemoteAllocation.Allocate(executionHandle, sizeof(long), MemoryProtection.ReadWrite);
+        using RemoteAllocation codeAllocation = RemoteAllocation.Allocate(executionHandle, PointerArgumentTrampolineSize, MemoryProtection.ReadWrite);
+
+        byte[] trampoline = BuildPointerArgumentTrampoline(functionAddress, argument, resultAllocation.Address);
+
+        codeAllocation.Write(trampoline);
+        codeAllocation.Protect(MemoryProtection.ExecuteRead);
+
+        uint exitCode = ExecuteTrampoline(executionHandle, codeAllocation, resultAllocation, functionAddress, timeoutMilliseconds);
+        nint returnValue = _memory.ReadPointer(resultAllocation.Address);
+
+        return new RemoteCallResult(returnValue, exitCode);
+    }
+
+    /// <summary>
     /// Builds the minimal Windows x64 trampoline used to invoke a parameterless native function and persist its complete <c>RAX</c> result into remote memory.
     /// The generated code reserves the required x64 shadow space, maintains stack alignment, invokes the target function, stores its return value and exits with a zero thread status.
     /// </summary>
@@ -198,6 +253,61 @@ internal sealed class RemoteCall
 
         if (offset != PointerReturnTrampolineSize)
             throw new InvalidOperationException($"Generated x64 trampoline size is {offset} byte(s), but {PointerReturnTrampolineSize} byte(s) were expected.");
+
+        return code;
+    }
+    /// <summary>
+    /// Builds the Windows x64 trampoline used to invoke a native function receiving one pointer-sized argument and returning a pointer-sized value.
+    /// The generated code places the argument in <c>RCX</c>, invokes the target function, stores the returned <c>RAX</c> value in remote memory and terminates cleanly.
+    /// </summary>
+    /// <param name="functionAddress">The remote native function address to invoke.</param>
+    /// <param name="argument">The pointer-sized value passed to the function through <c>RCX</c>.</param>
+    /// <param name="resultAddress">The writable remote address that receives the native function return value.</param>
+    /// <returns>The complete generated x64 machine-code sequence.</returns>
+    private static byte[] BuildPointerArgumentTrampoline(nint functionAddress, nint argument, nint resultAddress)
+    {
+        byte[] code = new byte[PointerArgumentTrampolineSize];
+        int offset = 0;
+
+        code[offset++] = 0x48;
+        code[offset++] = 0x83;
+        code[offset++] = 0xEC;
+        code[offset++] = 0x28;
+
+        code[offset++] = 0x48;
+        code[offset++] = 0xB9;
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(offset, sizeof(long)), argument.ToInt64());
+        offset += sizeof(long);
+
+        code[offset++] = 0x48;
+        code[offset++] = 0xB8;
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(offset, sizeof(long)), functionAddress.ToInt64());
+        offset += sizeof(long);
+
+        code[offset++] = 0xFF;
+        code[offset++] = 0xD0;
+
+        code[offset++] = 0x48;
+        code[offset++] = 0xBA;
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(offset, sizeof(long)), resultAddress.ToInt64());
+        offset += sizeof(long);
+
+        code[offset++] = 0x48;
+        code[offset++] = 0x89;
+        code[offset++] = 0x02;
+
+        code[offset++] = 0x31;
+        code[offset++] = 0xC0;
+
+        code[offset++] = 0x48;
+        code[offset++] = 0x83;
+        code[offset++] = 0xC4;
+        code[offset++] = 0x28;
+
+        code[offset++] = 0xC3;
+
+        if (offset != PointerArgumentTrampolineSize)
+            throw new InvalidOperationException($"Generated x64 trampoline size is {offset} byte(s), but {PointerArgumentTrampolineSize} byte(s) were expected.");
 
         return code;
     }
@@ -402,4 +512,6 @@ internal sealed class RemoteCall
 
         return exitCode;
     }
+
+
 }

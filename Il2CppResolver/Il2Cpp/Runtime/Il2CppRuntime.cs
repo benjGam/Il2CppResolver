@@ -18,6 +18,12 @@ internal sealed class Il2CppRuntime
     private const ulong MaximumAssemblyCount = 65536;
 
     /// <summary>
+    /// Defines the maximum number of bytes accepted for an IL2CPP image name returned by the runtime.
+    /// This defensive limit prevents malformed runtime pointers from causing unbounded remote string reads.
+    /// </summary>
+    private const int MaximumImageNameLength = 1024;
+
+    /// <summary>
     /// Represents the validated IL2CPP target whose native runtime is inspected by this instance.
     /// </summary>
     private readonly Il2CppTarget _target;
@@ -116,5 +122,45 @@ internal sealed class Il2CppRuntime
         }
 
         return assemblies.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Retrieves semantic information for every assembly currently registered in the specified IL2CPP domain.
+    /// Each raw <c>Il2CppAssembly*</c> is converted into its associated <c>Il2CppImage*</c> and image name by invoking the corresponding public IL2CPP runtime APIs.
+    /// </summary>
+    /// <param name="domain">The native <c>Il2CppDomain*</c> address whose assemblies should be inspected.</param>
+    /// <param name="timeout">The maximum amount of time allowed for each individual native IL2CPP runtime call to complete.</param>
+    /// <returns>An immutable snapshot describing every assembly discovered in the active IL2CPP domain.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="domain"/> is zero.
+    /// </exception>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when IL2CPP returns a null image, a null image-name pointer or invalid string data for any discovered assembly.
+    /// </exception>
+    public IReadOnlyList<Il2CppAssemblyInfo> GetAssemblyInfos(nint domain, TimeSpan timeout)
+    {
+        IReadOnlyList<nint> assemblies = GetAssemblies(domain, timeout);
+        List<Il2CppAssemblyInfo> results = new(assemblies.Count);
+
+        foreach (nint assemblyAddress in assemblies)
+        {
+            RemoteCallResult imageResult = _remoteCall.InvokePointer(_exports.AssemblyGetImage, assemblyAddress, timeout);
+
+            if (imageResult.ReturnValue == 0)
+                throw new InvalidDataException($"IL2CPP returned a null image pointer for assembly 0x{assemblyAddress:X}.");
+
+            nint imageAddress = imageResult.ReturnValue;
+
+            RemoteCallResult nameResult = _remoteCall.InvokePointer(_exports.ImageGetName, imageAddress, timeout);
+
+            if (nameResult.ReturnValue == 0)
+                throw new InvalidDataException($"IL2CPP returned a null image-name pointer for image 0x{imageAddress:X}.");
+
+            string name = _target.Memory.ReadNullTerminatedAscii(nameResult.ReturnValue, MaximumImageNameLength);
+
+            results.Add(new Il2CppAssemblyInfo(assemblyAddress, imageAddress, name));
+        }
+
+        return results.AsReadOnly();
     }
 }
