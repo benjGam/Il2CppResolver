@@ -75,28 +75,28 @@ internal sealed class Il2CppMethodInfoLayoutDetector
     }
 
     /// <summary>
-    /// Detects the unique compatibility layout supported by a collection of independently discovered runtime methods.
-    /// Duplicate <c>MethodInfo</c> addresses are removed before validation so repeated references cannot artificially increase the amount of evidence supporting a candidate.
+    /// Detects the unique compatibility layout supported by a collection of independently discovered runtime <c>MethodInfo</c> addresses.
+    /// Duplicate addresses are removed before validation so repeated references cannot artificially increase the amount of evidence supporting a candidate.
     /// </summary>
-    /// <param name="methods">The runtime methods used as structural validation evidence.</param>
+    /// <param name="methodAddresses">The native <c>MethodInfo*</c> addresses used as structural validation evidence.</param>
     /// <returns>The unique validated compatibility layout together with its supporting evidence counts.</returns>
     /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="methods"/> is <see langword="null"/>.
+    /// Thrown when <paramref name="methodAddresses"/> is <see langword="null"/>.
     /// </exception>
     /// <exception cref="ArgumentException">
     /// Thrown when too few distinct runtime methods are supplied to satisfy the configured validation threshold.
     /// </exception>
     /// <exception cref="InvalidDataException">
-    /// Thrown when no candidate layout satisfies the validation invariants or when multiple candidates remain valid and the layout is therefore ambiguous.
+    /// Thrown when no candidate layout satisfies the validation invariants or when multiple candidates remain valid.
     /// </exception>
-    public Il2CppMethodInfoLayoutDetectionResult Detect(IReadOnlyList<Il2CppMethodInfo> methods)
+    public Il2CppMethodInfoLayoutDetectionResult Detect(IReadOnlyList<nint> methodAddresses)
     {
-        ArgumentNullException.ThrowIfNull(methods);
+        ArgumentNullException.ThrowIfNull(methodAddresses);
 
-        IReadOnlyList<Il2CppMethodInfo> distinctMethods = GetDistinctMethods(methods);
+        IReadOnlyList<nint> distinctMethods = GetDistinctMethodAddresses(methodAddresses);
 
         if (distinctMethods.Count < _minimumValidatedMethodCount)
-            throw new ArgumentException($"Layout detection requires at least {_minimumValidatedMethodCount} distinct runtime methods, but only {distinctMethods.Count} were supplied.", nameof(methods));
+            throw new ArgumentException($"Layout detection requires at least {_minimumValidatedMethodCount} distinct runtime methods, but only {distinctMethods.Count} were supplied.", nameof(methodAddresses));
 
         List<Il2CppMethodInfoLayoutDetectionResult> matches = new();
         List<string> failures = new();
@@ -133,6 +133,95 @@ internal sealed class Il2CppMethodInfoLayoutDetector
         }
 
         return matches[0];
+    }
+
+    /// <summary>
+    /// Validates one compatibility profile against every supplied runtime <c>MethodInfo</c> address.
+    /// Null candidate pointers provide no evidence, while any non-null pointer that violates the native code invariants rejects the candidate.
+    /// </summary>
+    /// <param name="candidate">The compatibility profile to validate.</param>
+    /// <param name="methodAddresses">The distinct native <c>MethodInfo*</c> addresses used as evidence.</param>
+    /// <param name="validatedMethodCount">Receives the number of candidate pointers validated as executable code.</param>
+    /// <param name="nullMethodPointerCount">Receives the number of candidate pointers that were null.</param>
+    /// <param name="failureReason">Receives a diagnostic description when validation fails.</param>
+    /// <returns><see langword="true"/> when the candidate contains no invalid non-null pointer; otherwise <see langword="false"/>.</returns>
+    private bool TryValidateCandidate(IIl2CppMethodInfoLayout candidate, IReadOnlyList<nint> methodAddresses, out int validatedMethodCount, out int nullMethodPointerCount, out string? failureReason)
+    {
+        validatedMethodCount = 0;
+        nullMethodPointerCount = 0;
+        failureReason = null;
+
+        foreach (nint methodAddress in methodAddresses)
+        {
+            nint pointerAddress;
+
+            try
+            {
+                pointerAddress = checked((nint)(methodAddress.ToInt64() + candidate.DirectMethodPointerOffset));
+            }
+            catch (OverflowException)
+            {
+                failureReason = $"MethodInfo 0x{methodAddress:X} overflows when applying pointer offset 0x{candidate.DirectMethodPointerOffset:X}.";
+                return false;
+            }
+
+            nint nativeAddress = _target.Memory.ReadPointer(pointerAddress);
+
+            if (nativeAddress == 0)
+            {
+                nullMethodPointerCount++;
+                continue;
+            }
+
+            if (!_target.GameAssemblyImage.ContainsAddress(nativeAddress))
+            {
+                failureReason = $"MethodInfo 0x{methodAddress:X} produced pointer 0x{nativeAddress:X}, which is outside GameAssembly.";
+                return false;
+            }
+
+            PeSection? section = _target.GameAssemblyImage.FindSectionContainingAddress(nativeAddress);
+
+            if (section is null)
+            {
+                failureReason = $"MethodInfo 0x{methodAddress:X} produced pointer 0x{nativeAddress:X}, which cannot be associated with a parsed PE section.";
+                return false;
+            }
+
+            if (!section.IsExecutable)
+            {
+                failureReason = $"MethodInfo 0x{methodAddress:X} produced pointer 0x{nativeAddress:X} inside non-executable section '{section.Name}'.";
+                return false;
+            }
+
+            validatedMethodCount++;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Removes duplicate native method identities while preserving their original discovery order.
+    /// </summary>
+    /// <param name="methodAddresses">The runtime method addresses supplied to layout detection.</param>
+    /// <returns>An immutable sequence containing each distinct non-zero <c>MethodInfo*</c> address exactly once.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the supplied collection contains a null <c>MethodInfo*</c> address.
+    /// </exception>
+    private static IReadOnlyList<nint> GetDistinctMethodAddresses(IReadOnlyList<nint> methodAddresses)
+    {
+        HashSet<nint> addresses = new();
+        List<nint> results = new(methodAddresses.Count);
+
+        foreach (nint methodAddress in methodAddresses)
+        {
+            if (methodAddress == 0)
+                throw new ArgumentException("Layout detection cannot use a null MethodInfo address.", nameof(methodAddresses));
+
+            if (addresses.Add(methodAddress))
+                results.Add(methodAddress);
+        }
+
+        return results.AsReadOnly();
     }
 
     /// <summary>

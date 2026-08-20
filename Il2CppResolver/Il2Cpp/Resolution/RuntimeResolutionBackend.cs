@@ -9,7 +9,7 @@ namespace UnityIl2CppResolver.Il2Cpp.Resolution;
 /// This backend converts assembly and type queries into live <c>Il2CppAssembly</c>, <c>Il2CppImage</c> and <c>Il2CppClass</c> entities without relying on external metadata files, hardcoded RVAs or native code signatures.
 /// It currently performs uncached runtime resolution; session-level caching can be introduced later without changing the semantic query or result models.
 /// </summary>
-internal sealed class RuntimeResolutionBackend
+internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
 {
     /// <summary>
     /// Represents the low-level IL2CPP runtime abstraction used to enumerate assemblies and resolve classes.
