@@ -378,7 +378,7 @@ internal sealed class ResolutionSession : IDisposable
     /// <returns>The validated concrete static-field storage mapping.</returns>
     private ResolvedFieldStorage ResolveFieldStorage(ResolvedField field, Il2CppClassLayout layout)
     {
-        if (_cache.TryGetFieldStorage(field.FieldInfoAddress, layout, out ResolvedFieldStorage? cachedStorage))
+        if (_cache.TryGetFieldStorage(field, layout, out ResolvedFieldStorage? cachedStorage))
             return cachedStorage;
 
         Il2CppStaticFieldStorageResolver storageResolver = new(_target, layout);

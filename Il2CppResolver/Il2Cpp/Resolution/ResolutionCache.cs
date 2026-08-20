@@ -43,10 +43,21 @@ internal sealed class ResolutionCache
     /// </summary>
     private readonly Dictionary<string, ResolvedField> _fields = new(StringComparer.Ordinal);
 
-/// <summary>
-/// Stores validated static-field storage mappings indexed by both the target-specific <c>FieldInfo*</c> identity and the structural <c>Il2CppClass</c> layout used to produce the mapping.
-/// </summary>
-private readonly Dictionary<string, ResolvedFieldStorage> _fieldStorages = new(StringComparer.Ordinal);
+    /// <summary>
+    /// Identifies one validated static-field storage mapping by its runtime field identity, declaring <c>Il2CppClass</c> identity and exact structural compatibility layout.
+    /// The profile name is preserved because <see cref="ResolvedFieldStorage"/> exposes it as resolution evidence, while the structural offsets prevent layouts with different native interpretations from sharing cached results.
+    /// </summary>
+    private readonly record struct FieldStorageCacheKey(
+        nint FieldInfoAddress,
+        nint ClassAddress,
+        string CompatibilityProfile,
+        int StaticFieldsPointerOffset,
+        int StaticFieldsSizeOffset);
+
+    /// <summary>
+    /// Stores validated normal static-field storage mappings indexed by their runtime field, declaring class and exact <c>Il2CppClass</c> structural layout.
+    /// </summary>
+    private readonly Dictionary<FieldStorageCacheKey, ResolvedFieldStorage> _fieldStorages = new();
 
     /// <summary>
     /// Attempts to retrieve a previously resolved assembly for the exact supplied query.
@@ -186,53 +197,53 @@ private readonly Dictionary<string, ResolvedFieldStorage> _fieldStorages = new(S
     }
 
     /// <summary>
-    /// Attempts to retrieve a previously validated static-field storage mapping produced with the specified class layout.
-    /// The structural offsets form part of the cache identity so resolving the same field through different compatibility profiles cannot reuse incompatible storage evidence.
+    /// Attempts to retrieve a previously validated static-field storage mapping for the specified runtime field and exact <c>Il2CppClass</c> structural layout.
+    /// Both the declaring class identity and every structural layout component form part of the cache identity so mappings cannot be reused across incompatible runtime structures.
     /// </summary>
-    /// <param name="fieldInfoAddress">The target-specific native <c>FieldInfo*</c> address.</param>
-    /// <param name="layout">The explicit <c>Il2CppClass</c> layout associated with the requested mapping.</param>
-    /// <param name="storage">Receives the cached storage mapping when one exists.</param>
-    /// <returns><see langword="true"/> when a compatible cached mapping exists; otherwise <see langword="false"/>.</returns>
-    public bool TryGetFieldStorage(nint fieldInfoAddress, Il2CppClassLayout layout, out ResolvedFieldStorage? storage)
+    /// <param name="field">The semantically resolved static field whose cached storage mapping should be located.</param>
+    /// <param name="layout">The exact <c>Il2CppClass</c> layout requested for storage resolution.</param>
+    /// <param name="storage">Receives the compatible cached storage mapping when one exists.</param>
+    /// <returns><see langword="true"/> when a mapping exists for the exact field, declaring class and structural layout; otherwise <see langword="false"/>.</returns>
+    public bool TryGetFieldStorage(ResolvedField field, Il2CppClassLayout layout, out ResolvedFieldStorage? storage)
     {
-        if (fieldInfoAddress == 0)
-            throw new ArgumentOutOfRangeException(nameof(fieldInfoAddress), "The IL2CPP FieldInfo address cannot be zero.");
-
+        ArgumentNullException.ThrowIfNull(field);
         ArgumentNullException.ThrowIfNull(layout);
 
-        string key = BuildFieldStorageKey(fieldInfoAddress, layout);
+        FieldStorageCacheKey key = BuildFieldStorageKey(field, layout);
 
         return _fieldStorages.TryGetValue(key, out storage);
     }
 
     /// <summary>
-    /// Stores a validated static-field storage mapping using both its target-specific <c>FieldInfo*</c> identity and the structural layout that produced it.
+    /// Stores a validated static-field storage mapping under the exact runtime field, declaring class and <c>Il2CppClass</c> structural layout that produced it.
     /// </summary>
-    /// <param name="storage">The validated field storage mapping to cache.</param>
-    /// <param name="layout">The explicit class layout used to produce the mapping.</param>
+    /// <param name="storage">The validated static-field storage mapping to cache.</param>
+    /// <param name="layout">The exact <c>Il2CppClass</c> layout used to produce the mapping.</param>
     public void StoreFieldStorage(ResolvedFieldStorage storage, Il2CppClassLayout layout)
     {
         ArgumentNullException.ThrowIfNull(storage);
         ArgumentNullException.ThrowIfNull(layout);
 
-        string key = BuildFieldStorageKey(storage.Field.FieldInfoAddress, layout);
+        FieldStorageCacheKey key = BuildFieldStorageKey(storage.Field, layout);
 
         _fieldStorages[key] = storage;
     }
 
     /// <summary>
-    /// Builds the exact cache identity associated with a static-field storage mapping.
-    /// The layout name is intentionally excluded because structural offsets, rather than diagnostic labels, define compatibility.
+    /// Builds the strongly typed cache identity associated with one static-field storage mapping.
+    /// The identity includes both target-specific runtime addresses and the complete structural layout evidence exposed by the resolution result.
     /// </summary>
-    /// <param name="fieldInfoAddress">The target-specific native <c>FieldInfo*</c> address.</param>
-    /// <param name="layout">The class layout whose structural offsets form part of the mapping identity.</param>
-    /// <returns>A collision-safe cache key identifying one field under one exact structural layout.</returns>
-    private static string BuildFieldStorageKey(nint fieldInfoAddress, Il2CppClassLayout layout)
+    /// <param name="field">The resolved runtime field whose identity should be encoded.</param>
+    /// <param name="layout">The exact structural layout used to interpret its declaring <c>Il2CppClass</c>.</param>
+    /// <returns>The strongly typed cache key representing this field under the specified class layout.</returns>
+    private static FieldStorageCacheKey BuildFieldStorageKey(ResolvedField field, Il2CppClassLayout layout)
     {
-        return BuildCompositeKey(
-            fieldInfoAddress.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture),
-            layout.StaticFieldsPointerOffset.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            layout.StaticFieldsSizeOffset.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return new FieldStorageCacheKey(
+            field.FieldInfoAddress,
+            field.DeclaringType.ClassAddress,
+            layout.Name,
+            layout.StaticFieldsPointerOffset,
+            layout.StaticFieldsSizeOffset);
     }
 
     /// <summary>
