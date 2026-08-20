@@ -8,6 +8,28 @@
 internal enum ProcessAccessRights : uint
 {
     /// <summary>
+    /// Allows the caller to create a thread in the target process.
+    /// This permission is requested only by the short-lived remote execution layer.
+    /// </summary>
+    CreateThread = 0x0002,
+
+    /// <summary>
+    /// Allows the caller to perform virtual-memory operations such as allocating, protecting and releasing remote memory.
+    /// </summary>
+    VirtualMemoryOperation = 0x0008,
+
+    /// <summary>
+    /// Allows the caller to write into the virtual address space of the target process.
+    /// This permission is requested only while preparing short-lived remote call data and trampolines.
+    /// </summary>
+    VirtualMemoryWrite = 0x0020,
+
+    /// <summary>
+    /// Allows the caller to retrieve process information required by native remote-thread creation APIs.
+    /// </summary>
+    QueryInformation = 0x0400,
+
+    /// <summary>
     /// Allows the caller to read memory from the target process through native virtual-memory APIs.
     /// </summary>
     VirtualMemoryRead = 0x0010,

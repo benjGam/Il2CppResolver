@@ -200,4 +200,43 @@ public sealed class TargetProcess : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
+
+    /// <summary>
+    /// Opens an additional native handle to the target process using the exact access rights requested by a specialized native component.
+    /// The returned handle is independently owned by the caller and does not affect the primary read-only handle maintained by this <see cref="TargetProcess"/>.
+    /// </summary>
+    /// <param name="accessRights">The native process access rights required by the requesting component.</param>
+    /// <returns>A safe handle owning the newly opened process handle.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="accessRights"/> does not contain any process access rights.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">
+    /// Thrown when the current target process instance has already been disposed.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the target process has terminated.
+    /// </exception>
+    /// <exception cref="Win32Exception">
+    /// Thrown when the requested process handle cannot be opened.
+    /// </exception>
+    internal SafeProcessHandle OpenAdditionalHandle(ProcessAccessRights accessRights)
+    {
+        if ((uint)accessRights == 0)
+            throw new ArgumentOutOfRangeException(nameof(accessRights), "At least one process access right must be requested.");
+
+        ThrowIfDisposed();
+        ThrowIfExited();
+
+        SafeProcessHandle handle = NativeMethods.OpenProcess(accessRights, false, ProcessId);
+
+        if (handle.IsInvalid)
+        {
+            int errorCode = Marshal.GetLastWin32Error();
+            handle.Dispose();
+
+            throw new Win32Exception(errorCode, $"Unable to open an additional handle to process {ProcessId}.");
+        }
+
+        return handle;
+    }
 }
