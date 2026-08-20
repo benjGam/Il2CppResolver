@@ -12,6 +12,54 @@ namespace UnityIl2CppResolver.Native.PE;
 public sealed class PeImage
 {
     /// <summary>
+    /// Represents the offset of <c>NumberOfRvaAndSizes</c> inside a PE32+ optional header.
+    /// </summary>
+    private const int NumberOfRvaAndSizesOffset = 108;
+
+    /// <summary>
+    /// Represents the offset at which PE32+ data directory entries begin inside the optional header.
+    /// The export table is the first data directory entry.
+    /// </summary>
+    private const int DataDirectoryOffset = 112;
+
+    /// <summary>
+    /// Represents the fixed size in bytes of a PE data directory entry.
+    /// Each entry contains a 32-bit RVA followed by a 32-bit size.
+    /// </summary>
+    private const int DataDirectorySize = 8;
+
+    /// <summary>
+    /// Represents the fixed size in bytes of an <c>IMAGE_EXPORT_DIRECTORY</c> structure.
+    /// </summary>
+    private const int ExportDirectorySize = 40;
+
+    /// <summary>
+    /// Represents the size in bytes of one entry in the PE export address table.
+    /// </summary>
+    private const int ExportAddressEntrySize = 4;
+
+    /// <summary>
+    /// Represents the size in bytes of one entry in the PE export name pointer table.
+    /// </summary>
+    private const int ExportNamePointerEntrySize = 4;
+
+    /// <summary>
+    /// Represents the size in bytes of one entry in the PE export ordinal table.
+    /// </summary>
+    private const int ExportOrdinalEntrySize = 2;
+
+    /// <summary>
+    /// Defines the maximum number of bytes accepted while reading a null-terminated PE export string.
+    /// This prevents malformed images from causing unbounded remote-memory reads.
+    /// </summary>
+    private const int MaximumExportStringLength = 4096;
+
+    /// <summary>
+    /// Defines the number of bytes read from remote memory at once while decoding null-terminated PE export strings.
+    /// </summary>
+    private const int ExportStringReadChunkSize = 256;
+
+    /// <summary>
     /// Represents the expected DOS header signature identifying the beginning of a valid PE image.
     /// </summary>
     private const ushort DosSignature = 0x5A4D;
@@ -56,10 +104,6 @@ public sealed class PeImage
     /// </summary>
     private const int SizeOfImageOffset = 56;
 
-    /// <summary>
-    /// Represents the process memory accessor used to read PE headers from the loaded image.
-    /// </summary>
-    private readonly ProcessMemory _memory;
 
     /// <summary>
     /// Represents the native module whose loaded image is described by this instance.
@@ -89,21 +133,27 @@ public sealed class PeImage
     public IReadOnlyList<PeSection> Sections { get; }
 
     /// <summary>
+    /// Gets the immutable collection of symbols exposed through the PE export table.
+    /// The collection contains both named and ordinal-only exports, including forwarded exports.
+    /// </summary>
+    public IReadOnlyList<PeExport> Exports { get; }
+
+    /// <summary>
     /// Initializes a validated PE image representation from already parsed header information.
     /// Instances are created exclusively through <see cref="Read(ProcessMemory, ProcessModuleInfo)"/> so callers cannot bypass PE validation.
     /// </summary>
-    /// <param name="memory">The process memory accessor associated with the target process.</param>
     /// <param name="module">The native module represented by this PE image.</param>
     /// <param name="machine">The machine identifier declared by the COFF header.</param>
     /// <param name="imageSize">The loaded image size declared by the PE optional header.</param>
     /// <param name="sections">The parsed section table associated with the PE image.</param>
-    private PeImage(ProcessMemory memory, ProcessModuleInfo module, ushort machine, uint imageSize, IReadOnlyList<PeSection> sections)
+    /// <param name="exports">The parsed export table associated with the PE image.</param>
+    private PeImage(ProcessModuleInfo module, ushort machine, uint imageSize, IReadOnlyList<PeSection> sections, IReadOnlyList<PeExport> exports)
     {
-        _memory = memory;
         _module = module;
         Machine = machine;
         ImageSize = imageSize;
         Sections = sections;
+        Exports = exports;
     }
 
     /// <summary>
@@ -171,7 +221,337 @@ public sealed class PeImage
 
         IReadOnlyList<PeSection> sections = ReadSections(memory, module, optionalHeaderAddress, optionalHeaderSize, numberOfSections);
 
-        return new PeImage(memory, module, machine, imageSize, sections);
+        IReadOnlyList<PeExport> exports = ReadExports(memory, module, optionalHeaderAddress, optionalHeaderSize, imageSize);
+
+        return new PeImage(module, machine, imageSize, sections, exports);
+
+    }
+
+    /// <summary>
+    /// Reads and resolves all exports declared by the PE export directory.
+    /// The method combines the export address table, name pointer table and ordinal table into immutable <see cref="PeExport"/> instances.
+    /// </summary>
+    /// <param name="memory">The process memory accessor used to inspect the loaded PE export structures.</param>
+    /// <param name="module">The native module owning the PE image.</param>
+    /// <param name="optionalHeaderAddress">The absolute address of the PE32+ optional header.</param>
+    /// <param name="optionalHeaderSize">The optional header size declared by the COFF header.</param>
+    /// <param name="imageSize">The complete virtual size declared by the PE image.</param>
+    /// <returns>An immutable collection containing all valid exports declared by the image.</returns>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the PE export directory or one of its referenced tables contains inconsistent or out-of-range information.
+    /// </exception>
+    private static IReadOnlyList<PeExport> ReadExports(ProcessMemory memory, ProcessModuleInfo module, nint optionalHeaderAddress, ushort optionalHeaderSize, uint imageSize)
+    {
+        if (optionalHeaderSize < NumberOfRvaAndSizesOffset + sizeof(uint))
+            throw new InvalidDataException($"Module '{module.Name}' contains an incomplete PE32+ optional header.");
+
+        uint numberOfDataDirectories = memory.Read<uint>(optionalHeaderAddress + NumberOfRvaAndSizesOffset);
+
+        if (numberOfDataDirectories == 0)
+            return Array.Empty<PeExport>();
+
+        if (optionalHeaderSize < DataDirectoryOffset + DataDirectorySize)
+            throw new InvalidDataException($"Module '{module.Name}' declares PE data directories but does not contain a complete export directory entry.");
+
+        uint exportDirectoryRva = memory.Read<uint>(optionalHeaderAddress + DataDirectoryOffset);
+        uint exportDirectorySize = memory.Read<uint>(optionalHeaderAddress + DataDirectoryOffset + sizeof(uint));
+
+        if (exportDirectoryRva == 0 && exportDirectorySize == 0)
+            return Array.Empty<PeExport>();
+
+        if (exportDirectoryRva == 0 || exportDirectorySize < ExportDirectorySize)
+            throw new InvalidDataException($"Module '{module.Name}' contains an invalid PE export directory.");
+
+        EnsureRvaRange(module, imageSize, exportDirectoryRva, exportDirectorySize, "export directory");
+
+        byte[] exportDirectory = memory.ReadBytes(module.BaseAddress + (nint)exportDirectoryRva, ExportDirectorySize);
+
+        uint ordinalBase = BitConverter.ToUInt32(exportDirectory, 16);
+        uint numberOfFunctions = BitConverter.ToUInt32(exportDirectory, 20);
+        uint numberOfNames = BitConverter.ToUInt32(exportDirectory, 24);
+        uint addressOfFunctions = BitConverter.ToUInt32(exportDirectory, 28);
+        uint addressOfNames = BitConverter.ToUInt32(exportDirectory, 32);
+        uint addressOfNameOrdinals = BitConverter.ToUInt32(exportDirectory, 36);
+
+        if (numberOfFunctions == 0)
+            return Array.Empty<PeExport>();
+
+        if (numberOfNames > numberOfFunctions)
+            throw new InvalidDataException($"Module '{module.Name}' declares more named exports than export address entries.");
+
+        EnsureTableRange(module, imageSize, addressOfFunctions, numberOfFunctions, ExportAddressEntrySize, "export address table");
+
+        if (numberOfNames > 0)
+        {
+            EnsureTableRange(module, imageSize, addressOfNames, numberOfNames, ExportNamePointerEntrySize, "export name pointer table");
+            EnsureTableRange(module, imageSize, addressOfNameOrdinals, numberOfNames, ExportOrdinalEntrySize, "export ordinal table");
+        }
+
+        byte[] functionTable = memory.ReadBytes(module.BaseAddress + (nint)addressOfFunctions, checked((int)(numberOfFunctions * ExportAddressEntrySize)));
+        byte[] nameTable = numberOfNames > 0
+            ? memory.ReadBytes(module.BaseAddress + (nint)addressOfNames, checked((int)(numberOfNames * ExportNamePointerEntrySize)))
+            : Array.Empty<byte>();
+        byte[] ordinalTable = numberOfNames > 0
+            ? memory.ReadBytes(module.BaseAddress + (nint)addressOfNameOrdinals, checked((int)(numberOfNames * ExportOrdinalEntrySize)))
+            : Array.Empty<byte>();
+
+        List<PeExport> exports = new();
+        HashSet<uint> namedFunctionIndexes = new();
+
+        for (uint nameIndex = 0; nameIndex < numberOfNames; nameIndex++)
+        {
+            int namePointerOffset = checked((int)(nameIndex * ExportNamePointerEntrySize));
+            int ordinalOffset = checked((int)(nameIndex * ExportOrdinalEntrySize));
+
+            uint nameRva = BitConverter.ToUInt32(nameTable, namePointerOffset);
+            ushort functionIndex = BitConverter.ToUInt16(ordinalTable, ordinalOffset);
+
+            if (functionIndex >= numberOfFunctions)
+                throw new InvalidDataException($"Module '{module.Name}' contains an export ordinal index outside the export address table.");
+
+            string name = ReadAsciiString(memory, module, imageSize, nameRva);
+            uint functionRva = ReadFunctionRva(functionTable, functionIndex);
+
+            if (functionRva == 0)
+                throw new InvalidDataException($"Named export '{name}' in module '{module.Name}' references an empty export address entry.");
+
+            uint ordinal = GetPublicOrdinal(module, ordinalBase, functionIndex);
+
+            exports.Add(CreateExport(memory, module, imageSize, exportDirectoryRva, exportDirectorySize, name, ordinal, functionRva));
+            namedFunctionIndexes.Add(functionIndex);
+        }
+
+        for (uint functionIndex = 0; functionIndex < numberOfFunctions; functionIndex++)
+        {
+            if (namedFunctionIndexes.Contains(functionIndex))
+                continue;
+
+            uint functionRva = ReadFunctionRva(functionTable, functionIndex);
+
+            // Zero-valued entries represent unused slots in the export address table rather than actual exports.
+            if (functionRva == 0)
+                continue;
+
+            uint ordinal = GetPublicOrdinal(module, ordinalBase, functionIndex);
+
+            exports.Add(CreateExport(memory, module, imageSize, exportDirectoryRva, exportDirectorySize, null, ordinal, functionRva));
+        }
+
+        return exports.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Creates a semantic PE export from an export address table entry.
+    /// An RVA located inside the export directory range is interpreted as a forwarder string according to the PE specification; all other RVAs are treated as direct image addresses.
+    /// </summary>
+    /// <param name="memory">The process memory accessor used when a forwarder string must be decoded.</param>
+    /// <param name="module">The module owning the export.</param>
+    /// <param name="imageSize">The complete virtual size declared by the PE image.</param>
+    /// <param name="exportDirectoryRva">The RVA at which the PE export directory begins.</param>
+    /// <param name="exportDirectorySize">The complete size of the PE export directory range.</param>
+    /// <param name="name">The public export name, or <see langword="null"/> for an ordinal-only export.</param>
+    /// <param name="ordinal">The public ordinal assigned to the export.</param>
+    /// <param name="functionRva">The RVA stored in the export address table.</param>
+    /// <returns>A validated direct or forwarded PE export.</returns>
+    private static PeExport CreateExport(ProcessMemory memory, ProcessModuleInfo module, uint imageSize, uint exportDirectoryRva, uint exportDirectorySize, string? name, uint ordinal, uint functionRva)
+    {
+        bool isForwarded = IsRvaInRange(functionRva, exportDirectoryRva, exportDirectorySize);
+
+        if (isForwarded)
+        {
+            string forwarderName = ReadAsciiString(memory, module, imageSize, functionRva);
+            return new PeExport(name, ordinal, functionRva, null, forwarderName);
+        }
+
+        EnsureRvaRange(module, imageSize, functionRva, 1, $"export '{name ?? $"#{ordinal}"}'");
+
+        nint address = module.BaseAddress + (nint)functionRva;
+
+        return new PeExport(name, ordinal, functionRva, address, null);
+    }
+
+    /// <summary>
+    /// Reads a function RVA from an already loaded PE export address table.
+    /// </summary>
+    /// <param name="functionTable">The complete export address table.</param>
+    /// <param name="functionIndex">The unbiased ordinal index identifying the requested address table entry.</param>
+    /// <returns>The relative virtual address stored in the requested export address entry.</returns>
+    private static uint ReadFunctionRva(byte[] functionTable, uint functionIndex)
+    {
+        int functionOffset = checked((int)(functionIndex * ExportAddressEntrySize));
+        return BitConverter.ToUInt32(functionTable, functionOffset);
+    }
+
+    /// <summary>
+    /// Determines whether a relative virtual address belongs to the specified RVA range.
+    /// </summary>
+    /// <param name="relativeVirtualAddress">The RVA to test.</param>
+    /// <param name="rangeStart">The RVA at which the range begins.</param>
+    /// <param name="rangeSize">The number of bytes occupied by the range.</param>
+    /// <returns><see langword="true"/> when the address belongs to the range; otherwise <see langword="false"/>.</returns>
+    private static bool IsRvaInRange(uint relativeVirtualAddress, uint rangeStart, uint rangeSize)
+    {
+        if (rangeSize == 0 || relativeVirtualAddress < rangeStart)
+            return false;
+
+        return (ulong)relativeVirtualAddress - rangeStart < rangeSize;
+    }
+
+    /// <summary>
+    /// Converts an unbiased export address table index into the public ordinal declared by the PE image.
+    /// </summary>
+    /// <param name="module">The module owning the export table.</param>
+    /// <param name="ordinalBase">The ordinal base declared by the export directory.</param>
+    /// <param name="functionIndex">The unbiased index inside the export address table.</param>
+    /// <returns>The public ordinal assigned to the export.</returns>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the resulting ordinal exceeds the range of an unsigned 32-bit value.
+    /// </exception>
+    private static uint GetPublicOrdinal(ProcessModuleInfo module, uint ordinalBase, uint functionIndex)
+    {
+        ulong ordinal = (ulong)ordinalBase + functionIndex;
+
+        if (ordinal > uint.MaxValue)
+            throw new InvalidDataException($"Module '{module.Name}' contains an export ordinal that exceeds the supported range.");
+
+        return (uint)ordinal;
+    }
+
+    /// <summary>
+    /// Validates that a PE table described by a relative virtual address, entry count and entry size remains entirely inside the loaded image.
+    /// </summary>
+    /// <param name="module">The module owning the table.</param>
+    /// <param name="imageSize">The complete virtual size declared by the PE image.</param>
+    /// <param name="relativeVirtualAddress">The RVA at which the table begins.</param>
+    /// <param name="entryCount">The number of entries declared by the table.</param>
+    /// <param name="entrySize">The fixed size in bytes of each table entry.</param>
+    /// <param name="description">A diagnostic description of the table being validated.</param>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the table is empty, overflows its calculated size or falls outside the loaded image.
+    /// </exception>
+    private static void EnsureTableRange(ProcessModuleInfo module, uint imageSize, uint relativeVirtualAddress, uint entryCount, uint entrySize, string description)
+    {
+        if (relativeVirtualAddress == 0 || entryCount == 0 || entrySize == 0)
+            throw new InvalidDataException($"Module '{module.Name}' contains an invalid {description}.");
+
+        ulong size = (ulong)entryCount * entrySize;
+
+        EnsureRvaRange(module, imageSize, relativeVirtualAddress, size, description);
+
+        if (size > int.MaxValue)
+            throw new InvalidDataException($"Module '{module.Name}' contains a {description} that exceeds the supported managed buffer size.");
+    }
+
+    /// <summary>
+    /// Validates that a relative virtual address range remains entirely inside the loaded PE image.
+    /// </summary>
+    /// <param name="module">The module owning the PE image.</param>
+    /// <param name="imageSize">The complete virtual size declared by the PE image.</param>
+    /// <param name="relativeVirtualAddress">The RVA at which the range begins.</param>
+    /// <param name="size">The number of bytes occupied by the range.</param>
+    /// <param name="description">A diagnostic description of the range being validated.</param>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the range starts outside the image or extends beyond its declared virtual size.
+    /// </exception>
+    private static void EnsureRvaRange(ProcessModuleInfo module, uint imageSize, uint relativeVirtualAddress, ulong size, string description)
+    {
+        ulong start = relativeVirtualAddress;
+        ulong end = start + size;
+
+        if (size == 0 || start >= imageSize || end > imageSize || end < start)
+            throw new InvalidDataException($"Module '{module.Name}' contains a {description} outside the declared PE image range.");
+    }
+
+    /// <summary>
+    /// Reads a null-terminated ASCII string from an RVA inside the loaded PE image.
+    /// Remote memory is read in bounded chunks and the operation fails if no terminator is found before the configured safety limit.
+    /// </summary>
+    /// <param name="memory">The process memory accessor used to read the remote string.</param>
+    /// <param name="module">The module containing the string.</param>
+    /// <param name="imageSize">The complete virtual size declared by the PE image.</param>
+    /// <param name="relativeVirtualAddress">The RVA at which the ASCII string begins.</param>
+    /// <returns>The decoded ASCII string without its null terminator.</returns>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the string starts outside the image, is empty or does not terminate within the configured maximum length.
+    /// </exception>
+    private static string ReadAsciiString(ProcessMemory memory, ProcessModuleInfo module, uint imageSize, uint relativeVirtualAddress)
+    {
+        EnsureRvaRange(module, imageSize, relativeVirtualAddress, 1, "export string");
+
+        List<byte> bytes = new();
+        uint currentRva = relativeVirtualAddress;
+
+        while (bytes.Count < MaximumExportStringLength)
+        {
+            uint bytesRemainingInImage = imageSize - currentRva;
+            int bytesRemainingInLimit = MaximumExportStringLength - bytes.Count;
+            int chunkSize = (int)Math.Min((uint)Math.Min(ExportStringReadChunkSize, bytesRemainingInLimit), bytesRemainingInImage);
+
+            if (chunkSize <= 0)
+                break;
+
+            byte[] chunk = memory.ReadBytes(module.BaseAddress + (nint)currentRva, chunkSize);
+            int terminatorIndex = Array.IndexOf(chunk, (byte)0);
+
+            if (terminatorIndex >= 0)
+            {
+                bytes.AddRange(chunk.AsSpan(0, terminatorIndex).ToArray());
+
+                if (bytes.Count == 0)
+                    throw new InvalidDataException($"Module '{module.Name}' contains an empty PE export string at RVA 0x{relativeVirtualAddress:X8}.");
+
+                return Encoding.ASCII.GetString(bytes.ToArray());
+            }
+
+            bytes.AddRange(chunk);
+            currentRva += (uint)chunkSize;
+        }
+
+        throw new InvalidDataException($"Module '{module.Name}' contains an unterminated PE export string at RVA 0x{relativeVirtualAddress:X8}.");
+    }
+
+    /// <summary>
+    /// Searches the PE export table for a symbol matching the specified public name.
+    /// Export names are compared using ordinal case-sensitive semantics, matching the native PE symbol naming model.
+    /// </summary>
+    /// <param name="name">The public export name to locate.</param>
+    /// <returns>The matching export when found; otherwise <see langword="null"/>.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="name"/> is empty or contains only whitespace.
+    /// </exception>
+    public PeExport? FindExport(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        foreach (PeExport export in Exports)
+        {
+            if (string.Equals(export.Name, name, StringComparison.Ordinal))
+                return export;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Retrieves a required PE export by its public name.
+    /// This method is intended for runtime discovery components that cannot continue when a specific native entry point is unavailable.
+    /// </summary>
+    /// <param name="name">The public export name to retrieve.</param>
+    /// <returns>The matching exported symbol.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="name"/> is empty or contains only whitespace.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the requested export does not exist in the PE image.
+    /// </exception>
+    public PeExport GetRequiredExport(string name)
+    {
+        PeExport? export = FindExport(name);
+
+        if (export is null)
+            throw new InvalidOperationException($"Export '{name}' was not found in module '{_module.Name}'.");
+
+        return export;
     }
 
     /// <summary>
