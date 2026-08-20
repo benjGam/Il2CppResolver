@@ -675,4 +675,31 @@ public sealed class PeImage
 
         return Encoding.ASCII.GetString(nameBytes);
     }
+
+    /// <summary>
+    /// Finds the PE section containing the specified absolute runtime address.
+    /// The address is converted to an RVA relative to the loaded image before section ranges are inspected.
+    /// </summary>
+    /// <param name="address">The absolute virtual address to locate inside the loaded PE image.</param>
+    /// <returns>The containing <see cref="PeSection"/>, or <see langword="null"/> when the address does not belong to any parsed section.</returns>
+    public PeSection? FindSectionContainingAddress(nint address)
+    {
+        if (!ContainsAddress(address))
+            return null;
+
+        ulong relativeAddress = (ulong)address - (ulong)BaseAddress;
+
+        if (relativeAddress > uint.MaxValue)
+            return null;
+
+        uint rva = (uint)relativeAddress;
+
+        foreach (PeSection section in Sections)
+        {
+            if (section.ContainsRva(rva))
+                return section;
+        }
+
+        return null;
+    }
 }

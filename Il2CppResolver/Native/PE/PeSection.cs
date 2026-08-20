@@ -8,6 +8,17 @@
 public sealed record PeSection
 {
     /// <summary>
+    /// Represents the PE section characteristic indicating that the section contains executable code.
+    /// </summary>
+    private const uint MemoryExecuteCharacteristic = 0x20000000;
+
+    /// <summary>
+    /// Gets a value indicating whether the section is marked executable by the loaded PE image.
+    /// Native method pointers resolved from IL2CPP runtime structures must normally belong to an executable section before they can be considered valid code addresses.
+    /// </summary>
+    public bool IsExecutable => (Characteristics & MemoryExecuteCharacteristic) != 0;
+
+    /// <summary>
     /// Gets the section name stored in the PE section header, such as <c>.text</c>, <c>.rdata</c> or <c>.data</c>.
     /// </summary>
     public string Name { get; }
