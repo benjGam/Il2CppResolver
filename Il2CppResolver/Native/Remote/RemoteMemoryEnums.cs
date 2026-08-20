@@ -1,4 +1,4 @@
-﻿namespace UnityIl2CppResolver.Native.Remote;
+namespace UnityIl2CppResolver.Native.Remote;
 
 /// <summary>
 /// Defines the allocation modes supported by the remote execution layer when reserving memory inside the target process.

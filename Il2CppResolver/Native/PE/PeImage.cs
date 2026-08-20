@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using UnityIl2CppResolver.Native.Memory;
 using UnityIl2CppResolver.Native.Modules;
 
@@ -9,7 +9,7 @@ namespace UnityIl2CppResolver.Native.PE;
 /// This component belongs to the native inspection layer and parses PE headers directly from remote memory through <see cref="ProcessMemory"/>.
 /// Higher-level Unity and IL2CPP discovery components rely on this class to reason about executable image boundaries, sections and eventually exported symbols without reading the module file from disk.
 /// </summary>
-public sealed class PeImage
+internal sealed class PeImage
 {
     /// <summary>
     /// Represents the offset of <c>NumberOfRvaAndSizes</c> inside a PE32+ optional header.

@@ -1,4 +1,4 @@
-﻿namespace UnityIl2CppResolver.Native.Remote;
+namespace UnityIl2CppResolver.Native.Remote;
 
 /// <summary>
 /// Represents the completed result of a short-lived native function invocation executed inside the target process.

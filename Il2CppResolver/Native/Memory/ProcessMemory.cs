@@ -1,4 +1,4 @@
-﻿using Microsoft.Win32.SafeHandles;
+using Microsoft.Win32.SafeHandles;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -11,7 +11,7 @@ namespace UnityIl2CppResolver.Native.Memory;
 /// This class belongs to the native foundation of the resolver and operates exclusively on top of a validated <see cref="TargetProcess"/>.
 /// Higher-level components such as module inspection, PE parsing and IL2CPP discovery depend on this class instead of calling Win32 memory APIs directly.
 /// </summary>
-public sealed class ProcessMemory
+internal sealed class ProcessMemory
 {
     /// <summary>
     /// Represents the Windows <c>MEM_COMMIT</c> state required for accessible virtual-memory pages.

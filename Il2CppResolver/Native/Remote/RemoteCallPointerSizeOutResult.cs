@@ -1,4 +1,4 @@
-﻿namespace UnityIl2CppResolver.Native.Remote;
+namespace UnityIl2CppResolver.Native.Remote;
 
 /// <summary>
 /// Represents the completed result of a native function returning a pointer-sized value while also writing a pointer-sized unsigned value through an output argument.

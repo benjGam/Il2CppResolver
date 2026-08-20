@@ -1,4 +1,4 @@
-﻿namespace UnityIl2CppResolver.Il2Cpp.Queries;
+namespace UnityIl2CppResolver.Il2Cpp.Queries;
 
 /// <summary>
 /// Describes the semantic identity of an IL2CPP assembly requested by a resolver consumer.

@@ -1,4 +1,4 @@
-﻿namespace UnityIl2CppResolver.Il2Cpp.Queries;
+namespace UnityIl2CppResolver.Il2Cpp.Queries;
 
 /// <summary>
 /// Describes the semantic identity of a managed method requested from an IL2CPP target.

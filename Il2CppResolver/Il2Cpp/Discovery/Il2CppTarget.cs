@@ -1,4 +1,4 @@
-﻿using UnityIl2CppResolver.Native.Memory;
+using UnityIl2CppResolver.Native.Memory;
 using UnityIl2CppResolver.Native.Modules;
 using UnityIl2CppResolver.Native.PE;
 using UnityIl2CppResolver.Native.Process;
@@ -10,7 +10,7 @@ namespace UnityIl2CppResolver.Il2Cpp.Discovery;
 /// This class establishes the bridge between the generic native inspection layer and the IL2CPP-specific resolver layers.
 /// It exposes the validated GameAssembly image and the native process primitives required by future metadata and runtime resolution backends without performing any semantic resolution itself.
 /// </summary>
-public sealed class Il2CppTarget
+internal sealed class Il2CppTarget
 {
     /// <summary>
     /// Gets the validated target process containing the discovered IL2CPP runtime.

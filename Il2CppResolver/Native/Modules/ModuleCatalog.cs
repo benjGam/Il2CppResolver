@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using UnityIl2CppResolver.Native.Process;
 
@@ -9,7 +9,7 @@ namespace UnityIl2CppResolver.Native.Modules;
 /// This component belongs to the native discovery layer and transforms raw Windows module snapshot information into immutable <see cref="ProcessModuleInfo"/> instances.
 /// Higher-level components use this catalog to locate candidate modules before performing PE, Unity or IL2CPP-specific inspection.
 /// </summary>
-public sealed class ModuleCatalog
+internal sealed class ModuleCatalog
 {
     /// <summary>
     /// Represents the target process whose loaded modules are enumerated by this catalog.

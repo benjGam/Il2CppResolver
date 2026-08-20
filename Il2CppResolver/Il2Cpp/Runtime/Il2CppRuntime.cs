@@ -1,6 +1,7 @@
-﻿using System.Buffers.Binary;
+using System.Buffers.Binary;
 using System.Text;
 using UnityIl2CppResolver.Il2Cpp.Discovery;
+using UnityIl2CppResolver.Il2Cpp.Runtime.Model;
 using UnityIl2CppResolver.Native.Remote;
 
 namespace UnityIl2CppResolver.Il2Cpp.Runtime;
@@ -60,6 +61,16 @@ internal sealed class Il2CppRuntime
     private readonly RemoteCall _remoteCall;
 
     /// <summary>
+    /// Stores semantic type names already obtained through <c>il2cpp_type_get_name</c> for the current session snapshot.
+    /// </summary>
+    private readonly Dictionary<nint, string> _typeNames = new();
+
+    /// <summary>
+    /// Describes optional public IL2CPP runtime capabilities available on the current target.
+    /// </summary>
+    public Il2CppRuntimeCapabilities Capabilities { get; }
+
+    /// <summary>
     /// Initializes runtime inspection over an already validated IL2CPP target and runtime export table.
     /// </summary>
     /// <param name="target">The validated IL2CPP target containing the runtime.</param>
@@ -72,6 +83,7 @@ internal sealed class Il2CppRuntime
         _target = target;
         _exports = exports;
         _remoteCall = new RemoteCall(target.Process);
+        Capabilities = new Il2CppRuntimeCapabilities(exports);
     }
 
     /// <summary>
@@ -314,7 +326,23 @@ internal sealed class Il2CppRuntime
     /// <returns>A semantic runtime description of the requested method.</returns>
     public Il2CppMethodInfo GetMethodInfo(nint methodAddress, TimeSpan timeout)
     {
-        string name = GetMethodName(methodAddress, timeout);
+        return GetMethodInfo(methodAddress, GetMethodName(methodAddress, timeout), timeout);
+    }
+
+    /// <summary>
+    /// Retrieves the complete semantic signature of a runtime <c>MethodInfo</c> while reusing a method name already obtained during class-member indexing.
+    /// </summary>
+    /// <param name="methodAddress">The native <c>MethodInfo*</c> to inspect.</param>
+    /// <param name="knownName">The exact semantic method name already obtained from the runtime.</param>
+    /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
+    /// <returns>A semantic runtime description of the requested method.</returns>
+    public Il2CppMethodInfo GetMethodInfo(nint methodAddress, string knownName, TimeSpan timeout)
+    {
+        if (methodAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(methodAddress), "The IL2CPP method pointer cannot be zero.");
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(knownName);
+        string name = knownName;
         uint parameterCount = _remoteCall.InvokeUInt32(_exports.MethodGetParamCount, methodAddress, timeout);
 
         if (parameterCount > MaximumMethodParameterCount)
@@ -347,10 +375,13 @@ internal sealed class Il2CppRuntime
     /// <param name="typeAddress">The native <c>Il2CppType*</c> to inspect.</param>
     /// <param name="timeout">The maximum duration allowed for each required native runtime call.</param>
     /// <returns>The semantic managed type name.</returns>
-    private string GetTypeName(nint typeAddress, TimeSpan timeout)
+    public string GetTypeName(nint typeAddress, TimeSpan timeout)
     {
         if (typeAddress == 0)
             throw new ArgumentOutOfRangeException(nameof(typeAddress), "The IL2CPP type pointer cannot be zero.");
+
+        if (_typeNames.TryGetValue(typeAddress, out string? cachedName))
+            return cachedName;
 
         RemoteCallResult result = _remoteCall.InvokePointer(_exports.TypeGetName, typeAddress, timeout);
 
@@ -375,6 +406,7 @@ internal sealed class Il2CppRuntime
         if (string.IsNullOrWhiteSpace(name))
             throw new InvalidDataException($"IL2CPP returned an empty semantic name for type 0x{typeAddress:X}.");
 
+        _typeNames[typeAddress] = name;
         return name;
     }
 
@@ -450,10 +482,23 @@ internal sealed class Il2CppRuntime
     /// <returns>A semantic runtime description of the requested field.</returns>
     public Il2CppFieldInfo GetFieldInfo(nint fieldAddress, TimeSpan timeout)
     {
+        return GetFieldInfo(fieldAddress, GetFieldName(fieldAddress, timeout), timeout);
+    }
+
+    /// <summary>
+    /// Retrieves the complete semantic and storage description of a runtime <c>FieldInfo</c> while reusing a field name already obtained during class-member indexing.
+    /// </summary>
+    /// <param name="fieldAddress">The native <c>FieldInfo*</c> to inspect.</param>
+    /// <param name="knownName">The exact semantic field name already obtained from the runtime.</param>
+    /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
+    /// <returns>A semantic runtime description of the requested field.</returns>
+    public Il2CppFieldInfo GetFieldInfo(nint fieldAddress, string knownName, TimeSpan timeout)
+    {
         if (fieldAddress == 0)
             throw new ArgumentOutOfRangeException(nameof(fieldAddress), "The IL2CPP field pointer cannot be zero.");
 
-        string name = GetFieldName(fieldAddress, timeout);
+        ArgumentException.ThrowIfNullOrWhiteSpace(knownName);
+        string name = knownName;
 
         RemoteCallResult typeResult = _remoteCall.InvokePointer(_exports.FieldGetType, fieldAddress, timeout);
 
@@ -465,6 +510,50 @@ internal sealed class Il2CppRuntime
         nuint offset = _remoteCall.InvokeNuint(_exports.FieldGetOffset, fieldAddress, timeout);
 
         return new Il2CppFieldInfo(fieldAddress, name, typeName, (System.Reflection.FieldAttributes)rawAttributes, offset);
+    }
+
+    /// <summary>
+    /// Attempts to retrieve the normal static-field data block of an IL2CPP class through optional public runtime APIs.
+    /// The method returns <see langword="false"/> only when the target does not expose the complete capability; invalid runtime values still produce diagnostics.
+    /// </summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> whose static storage should be inspected.</param>
+    /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
+    /// <param name="staticFieldsAddress">Receives the native static-data block address when the capability is available.</param>
+    /// <param name="staticFieldsSize">Receives the total static-data block size when the capability is available.</param>
+    /// <returns><see langword="true"/> when the optional runtime APIs are available and produced a validated block; otherwise <see langword="false"/>.</returns>
+    public bool TryGetStaticFieldStorage(nint classAddress, TimeSpan timeout, out nint staticFieldsAddress, out uint staticFieldsSize)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class pointer cannot be zero.");
+
+        staticFieldsAddress = 0;
+        staticFieldsSize = 0;
+
+        if (!_exports.ClassGetStaticFieldData.HasValue || !_exports.ClassGetDataSize.HasValue)
+            return false;
+
+        nint dataFunction = _exports.ClassGetStaticFieldData.Value;
+        nint sizeFunction = _exports.ClassGetDataSize.Value;
+        RemoteCallResult dataResult = _remoteCall.InvokePointer(dataFunction, classAddress, timeout);
+        uint dataSize = _remoteCall.InvokeUInt32(sizeFunction, classAddress, timeout);
+
+        if (dataResult.ReturnValue == 0)
+            throw new InvalidDataException($"IL2CPP returned a null static-field data pointer for class 0x{classAddress:X}.");
+
+        if (dataSize == 0)
+            throw new InvalidDataException($"IL2CPP returned a zero static-field data size for class 0x{classAddress:X}.");
+
+        staticFieldsAddress = dataResult.ReturnValue;
+        staticFieldsSize = dataSize;
+        return true;
+    }
+
+    /// <summary>
+    /// Invalidates local low-level runtime caches that are safe to rebuild from the live target.
+    /// </summary>
+    public void ClearCaches()
+    {
+        _typeNames.Clear();
     }
 
     /// <summary>

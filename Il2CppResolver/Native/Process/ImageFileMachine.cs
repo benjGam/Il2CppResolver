@@ -1,4 +1,4 @@
-﻿namespace UnityIl2CppResolver.Native.Process;
+namespace UnityIl2CppResolver.Native.Process;
 
 /// <summary>
 /// Identifies Windows PE machine architectures as exposed by process architecture inspection APIs.

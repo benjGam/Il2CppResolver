@@ -1,4 +1,4 @@
-﻿using UnityIl2CppResolver.Native.Memory;
+using UnityIl2CppResolver.Native.Memory;
 using UnityIl2CppResolver.Native.Modules;
 using UnityIl2CppResolver.Native.PE;
 using UnityIl2CppResolver.Native.Process;
@@ -10,7 +10,7 @@ namespace UnityIl2CppResolver.Il2Cpp.Discovery;
 /// This component is the entry point of the IL2CPP-specific layer: it consumes generic native process, module and PE primitives and produces an <see cref="Il2CppTarget"/> that can safely be consumed by future runtime and metadata resolution backends.
 /// The current detection strategy validates <c>GameAssembly.dll</c> and a minimal set of public IL2CPP runtime exports; additional detection strategies can be introduced later without changing the resulting target model.
 /// </summary>
-public sealed class Il2CppTargetDetector
+internal sealed class Il2CppTargetDetector
 {
     /// <summary>
     /// Defines the native module name used by Unity IL2CPP Windows players to host the IL2CPP runtime and compiled managed code.
@@ -28,8 +28,7 @@ public sealed class Il2CppTargetDetector
         "il2cpp_domain_get_assemblies",
         "il2cpp_assembly_get_image",
         "il2cpp_image_get_name",
-        "il2cpp_class_from_name",
-        "il2cpp_class_get_method_from_name"
+        "il2cpp_class_from_name"
     };
 
     /// <summary>

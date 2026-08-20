@@ -1,11 +1,11 @@
-﻿namespace UnityIl2CppResolver.Native.Modules;
+namespace UnityIl2CppResolver.Native.Modules;
 
 /// <summary>
 /// Describes a native module currently loaded in the virtual address space of the target process.
 /// This immutable model belongs to the native discovery layer and provides higher-level components with the module boundaries and filesystem identity required for PE inspection.
 /// It contains no Unity or IL2CPP-specific knowledge; modules such as GameAssembly.dll are interpreted only by higher architectural layers.
 /// </summary>
-public sealed record ProcessModuleInfo
+internal sealed record ProcessModuleInfo
 {
     /// <summary>
     /// Gets the file name of the loaded module, such as <c>GameAssembly.dll</c> or <c>UnityPlayer.dll</c>.

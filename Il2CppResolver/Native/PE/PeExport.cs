@@ -1,11 +1,11 @@
-﻿namespace UnityIl2CppResolver.Native.PE;
+namespace UnityIl2CppResolver.Native.PE;
 
 /// <summary>
 /// Describes a symbol exposed through the export table of a loaded Portable Executable image.
 /// This immutable model belongs to the native PE inspection layer and represents either a direct export backed by an address inside the image or a forwarded export referencing another module.
 /// Higher-level runtime discovery components can use exported symbols without parsing raw PE export structures or making assumptions about their underlying representation.
 /// </summary>
-public sealed record PeExport
+internal sealed record PeExport
 {
     /// <summary>
     /// Gets the public name associated with the exported symbol.

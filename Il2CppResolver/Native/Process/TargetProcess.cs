@@ -1,6 +1,5 @@
-﻿using Microsoft.Win32.SafeHandles;
+using Microsoft.Win32.SafeHandles;
 using System.ComponentModel;
-using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace UnityIl2CppResolver.Native.Process;
@@ -10,7 +9,7 @@ namespace UnityIl2CppResolver.Native.Process;
 /// This class owns the native process handle and establishes the basic process-level invariants required by the resolver.
 /// It is the entry point of the native layer: memory access, module discovery and higher-level IL2CPP resolution components operate on top of a validated <see cref="TargetProcess"/> instance.
 /// </summary>
-public sealed class TargetProcess : IDisposable
+internal sealed class TargetProcess : IDisposable
 {
     /// <summary>
     /// Owns the native handle associated with the target process.
@@ -92,7 +91,7 @@ public sealed class TargetProcess : IDisposable
     /// Thrown when <paramref name="processId"/> is less than or equal to zero.
     /// </exception>
     /// <exception cref="PlatformNotSupportedException">
-    /// Thrown when the current operating system is not Windows or when the target process is not a native x64 process.
+    /// Thrown when the current operating system is not Windows, the resolver host is not 64-bit or the target process is not a native x64 process.
     /// </exception>
     /// <exception cref="Win32Exception">
     /// Thrown when the target process cannot be opened or when its architecture cannot be determined.
@@ -103,6 +102,9 @@ public sealed class TargetProcess : IDisposable
 
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("TargetProcess currently supports Windows only.");
+
+        if (!Environment.Is64BitProcess)
+            throw new PlatformNotSupportedException("The IL2CPP resolver requires a 64-bit host process.");
 
         ProcessAccessRights accessRights = ProcessAccessRights.QueryLimitedInformation |
                                    ProcessAccessRights.VirtualMemoryRead |

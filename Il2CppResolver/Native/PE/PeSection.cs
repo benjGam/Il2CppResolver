@@ -1,11 +1,11 @@
-﻿namespace UnityIl2CppResolver.Native.PE;
+namespace UnityIl2CppResolver.Native.PE;
 
 /// <summary>
 /// Describes a section belonging to a Portable Executable image loaded in the target process.
 /// This immutable model belongs to the native PE inspection layer and exposes the virtual layout and characteristics required by higher-level validation components.
 /// IL2CPP and Unity-specific layers can use sections such as <c>.text</c> and <c>.rdata</c> without depending on raw PE header structures.
 /// </summary>
-public sealed record PeSection
+internal sealed record PeSection
 {
     /// <summary>
     /// Represents the PE section characteristic indicating that the section contains executable code.

@@ -1,4 +1,4 @@
-﻿namespace UnityIl2CppResolver.Native.Process;
+namespace UnityIl2CppResolver.Native.Process;
 
 /// <summary>
 /// Defines the native Windows access rights that can be requested when opening a target process.

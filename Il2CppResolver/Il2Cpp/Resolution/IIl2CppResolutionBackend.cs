@@ -1,39 +1,30 @@
-﻿using UnityIl2CppResolver.Il2Cpp.Queries;
-using UnityIl2CppResolver.Il2Cpp.Resolution.Model;
+using UnityIl2CppResolver.Il2Cpp.Queries;
+using UnityIl2CppResolver.Il2Cpp.Results;
 
 namespace UnityIl2CppResolver.Il2Cpp.Resolution;
 
 /// <summary>
-/// Defines the semantic entity-resolution contract implemented by IL2CPP discovery backends.
-/// Implementations may obtain their evidence from the live IL2CPP runtime, metadata files or future native analysis strategies, but consumers receive the same assembly, type and method resolution models regardless of the underlying source.
+/// Defines the semantic resolution boundary consumed by a resolver session independently from the concrete source of IL2CPP discovery data.
 /// </summary>
 internal interface IIl2CppResolutionBackend
 {
-    /// <summary>
-    /// Resolves a semantic assembly query to a concrete IL2CPP assembly identity.
-    /// </summary>
-    /// <param name="query">The semantic assembly identity to resolve.</param>
-    /// <returns>The resolved assembly and its backend-specific runtime evidence.</returns>
+    /// <summary>Resolves a semantic assembly query.</summary>
+    /// <param name="query">The assembly query to resolve.</param>
+    /// <returns>The resolved runtime assembly.</returns>
     ResolvedAssembly ResolveAssembly(AssemblyQuery query);
 
-    /// <summary>
-    /// Resolves a semantic type query to a concrete IL2CPP type identity.
-    /// </summary>
-    /// <param name="query">The semantic type identity to resolve.</param>
-    /// <returns>The resolved type and its declaring assembly.</returns>
+    /// <summary>Resolves a semantic type query.</summary>
+    /// <param name="query">The type query to resolve.</param>
+    /// <returns>The resolved runtime type.</returns>
     ResolvedType ResolveType(TypeQuery query);
 
-    /// <summary>
-    /// Resolves a semantic method query to a concrete IL2CPP method identity.
-    /// </summary>
-    /// <param name="query">The complete semantic method signature to resolve.</param>
-    /// <returns>The resolved method and its verified runtime signature.</returns>
+    /// <summary>Resolves a semantic method query.</summary>
+    /// <param name="query">The method query to resolve.</param>
+    /// <returns>The resolved runtime method.</returns>
     ResolvedMethod ResolveMethod(MethodQuery query);
 
-    /// <summary>
-    /// Resolves a semantic field query to a concrete IL2CPP field identity and storage description.
-    /// </summary>
-    /// <param name="query">The semantic field identity to resolve.</param>
-    /// <returns>The resolved field and its runtime storage characteristics.</returns>
+    /// <summary>Resolves a semantic field query.</summary>
+    /// <param name="query">The field query to resolve.</param>
+    /// <returns>The resolved runtime field.</returns>
     ResolvedField ResolveField(FieldQuery query);
 }
