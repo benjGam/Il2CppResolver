@@ -17,29 +17,38 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
     private readonly Il2CppRuntime _runtime;
 
     /// <summary>
+    /// Stores semantic entities already resolved during the current target session.
+    /// The backend consults this cache before performing live IL2CPP traversal and records only successfully validated results.
+    /// </summary>
+    private readonly ResolutionCache _cache;
+
+    /// <summary>
     /// Defines the maximum duration allowed for each individual remote IL2CPP API invocation performed by this backend.
     /// </summary>
     private readonly TimeSpan _callTimeout;
 
     /// <summary>
-    /// Initializes semantic resolution over the specified IL2CPP runtime.
+    /// Initializes semantic resolution over the specified IL2CPP runtime and session-scoped resolution cache.
     /// </summary>
     /// <param name="runtime">The low-level IL2CPP runtime abstraction associated with the target process.</param>
+    /// <param name="cache">The session-scoped cache used to reuse successful semantic resolution results.</param>
     /// <param name="callTimeout">The finite timeout applied independently to each native runtime call.</param>
     /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="runtime"/> is <see langword="null"/>.
+    /// Thrown when <paramref name="runtime"/> or <paramref name="cache"/> is <see langword="null"/>.
     /// </exception>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when <paramref name="callTimeout"/> is zero or negative.
     /// </exception>
-    public RuntimeResolutionBackend(Il2CppRuntime runtime, TimeSpan callTimeout)
+    public RuntimeResolutionBackend(Il2CppRuntime runtime, ResolutionCache cache, TimeSpan callTimeout)
     {
         ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentNullException.ThrowIfNull(cache);
 
         if (callTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(callTimeout), "The runtime call timeout must be positive.");
 
         _runtime = runtime;
+        _cache = cache;
         _callTimeout = callTimeout;
     }
 
@@ -61,6 +70,9 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
     public ResolvedAssembly ResolveAssembly(AssemblyQuery query)
     {
         ArgumentNullException.ThrowIfNull(query);
+
+        if (_cache.TryGetAssembly(query, out ResolvedAssembly? cachedAssembly))
+            return cachedAssembly;
 
         nint domain = _runtime.GetDomain(_callTimeout);
         IReadOnlyList<Il2CppAssemblyInfo> assemblies = _runtime.GetAssemblyInfos(domain, _callTimeout);
@@ -84,7 +96,11 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
         if (match is null)
             throw new KeyNotFoundException($"IL2CPP assembly '{query.Name}' was not found in the active runtime domain.");
 
-        return new ResolvedAssembly(query, match.Name, match.AssemblyAddress, match.ImageAddress);
+        ResolvedAssembly result = new(query, match.Name, match.AssemblyAddress, match.ImageAddress);
+
+        _cache.StoreAssembly(result);
+
+        return result;
     }
 
     /// <summary>
@@ -102,13 +118,20 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
     {
         ArgumentNullException.ThrowIfNull(query);
 
+        if (_cache.TryGetType(query, out ResolvedType? cachedType))
+            return cachedType;
+
         ResolvedAssembly assembly = ResolveAssembly(query.Assembly);
         nint classAddress = _runtime.GetClass(assembly.ImageAddress, query.Namespace, query.Name, _callTimeout);
 
         if (classAddress == 0)
             throw new KeyNotFoundException($"IL2CPP type '{query.Namespace}.{query.Name}' was not found in assembly '{assembly.Name}'.");
 
-        return new ResolvedType(query, assembly, classAddress);
+        ResolvedType result = new(query, assembly, classAddress);
+
+        _cache.StoreType(result);
+
+        return result;
     }
 
     /// <summary>
@@ -129,6 +152,9 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
     public ResolvedMethod ResolveMethod(MethodQuery query)
     {
         ArgumentNullException.ThrowIfNull(query);
+
+        if (_cache.TryGetMethod(query, out ResolvedMethod? cachedMethod))
+            return cachedMethod;
 
         ResolvedType declaringType = ResolveType(query.DeclaringType);
         IReadOnlyList<nint> methods = _runtime.GetMethods(declaringType.ClassAddress, _callTimeout);
@@ -155,7 +181,11 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
         if (match is null)
             throw new KeyNotFoundException($"IL2CPP method '{FormatMethodSignature(query)}' was not found.");
 
-        return new ResolvedMethod(query, declaringType, match.MethodAddress, match.ReturnTypeName, match.ParameterTypeNames);
+        ResolvedMethod result = new(query, declaringType, match.MethodAddress, match.ReturnTypeName, match.ParameterTypeNames);
+
+        _cache.StoreMethod(result);
+
+        return result;
     }
 
     /// <summary>

@@ -42,6 +42,12 @@ internal sealed class ResolutionSession : IDisposable
     private readonly Il2CppRuntime _runtime;
 
     /// <summary>
+    /// Stores semantic and native resolution results produced during the lifetime of this target-specific session.
+    /// The cache is owned by the session so no target address can survive attachment to the process that produced it.
+    /// </summary>
+    private readonly ResolutionCache _cache;
+
+    /// <summary>
     /// Represents the active semantic resolution strategy used by the session.
     /// The initial implementation uses runtime introspection, while future sessions may compose metadata and fallback backends behind the same contract.
     /// </summary>
@@ -82,12 +88,13 @@ internal sealed class ResolutionSession : IDisposable
     /// <param name="backend">The semantic resolution backend used by the session.</param>
     /// <param name="layoutDetector">The runtime layout detector used for native method-code mapping.</param>
     /// <param name="callTimeout">The timeout applied to individual remote runtime calls.</param>
-    private ResolutionSession(TargetProcess process, Il2CppTarget target, Il2CppRuntime runtime, IIl2CppResolutionBackend backend, Il2CppMethodInfoLayoutDetector layoutDetector, TimeSpan callTimeout)
+    private ResolutionSession(TargetProcess process, Il2CppTarget target, Il2CppRuntime runtime, IIl2CppResolutionBackend backend, ResolutionCache cache, Il2CppMethodInfoLayoutDetector layoutDetector, TimeSpan callTimeout)
     {
         _process = process;
         _target = target;
         _runtime = runtime;
         _backend = backend;
+        _cache = cache;
         _layoutDetector = layoutDetector;
         _callTimeout = callTimeout;
     }
@@ -114,16 +121,17 @@ internal sealed class ResolutionSession : IDisposable
             Il2CppTarget target = new Il2CppTargetDetector(process).Detect();
             Il2CppRuntimeExports exports = Il2CppRuntimeExports.Resolve(target);
             Il2CppRuntime runtime = new(target, exports);
-            RuntimeResolutionBackend backend = new(runtime, callTimeout);
+            ResolutionCache cache = new();
+            RuntimeResolutionBackend backend = new(runtime, cache, callTimeout);
 
             IIl2CppMethodInfoLayout[] layouts =
             {
-                DirectMethodPointerFirstLayout.Instance
-            };
+            DirectMethodPointerFirstLayout.Instance
+        };
 
             Il2CppMethodInfoLayoutDetector layoutDetector = new(target, layouts, MinimumValidatedMethodCount);
 
-            return new ResolutionSession(process, target, runtime, backend, layoutDetector, callTimeout);
+            return new ResolutionSession(process, target, runtime, backend, cache, layoutDetector, callTimeout);
         }
         catch
         {
@@ -167,7 +175,7 @@ internal sealed class ResolutionSession : IDisposable
 
     /// <summary>
     /// Resolves a semantic method and maps its runtime <c>MethodInfo</c> to validated executable native code.
-    /// Runtime layout detection is performed lazily on the first native method-code request and the validated target-wide layout is reused for subsequent mappings.
+    /// Both semantic resolution and validated native mappings are reused from the session cache when available.
     /// </summary>
     /// <param name="query">The complete semantic method signature whose native implementation should be resolved.</param>
     /// <returns>The resolved semantic method together with its validated direct native code address.</returns>
@@ -176,10 +184,17 @@ internal sealed class ResolutionSession : IDisposable
         ThrowIfDisposed();
 
         ResolvedMethod method = _backend.ResolveMethod(query);
+
+        if (_cache.TryGetMethodCode(method.MethodInfoAddress, out ResolvedMethodCode? cachedCode))
+            return cachedCode;
+
         IIl2CppMethodInfoLayout layout = GetMethodInfoLayout(method.DeclaringType);
         Il2CppMethodPointerResolver pointerResolver = new(_target, layout);
+        ResolvedMethodCode result = pointerResolver.Resolve(method);
 
-        return pointerResolver.Resolve(method);
+        _cache.StoreMethodCode(result);
+
+        return result;
     }
 
     /// <summary>
@@ -235,5 +250,17 @@ internal sealed class ResolutionSession : IDisposable
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+    }
+
+    /// <summary>
+    /// Invalidates every cached semantic and native resolution result associated with this session.
+    /// The detected <c>MethodInfo</c> layout is also discarded so the next native method-code request rebuilds its compatibility evidence from the live target.
+    /// </summary>
+    public void ClearCache()
+    {
+        ThrowIfDisposed();
+
+        _cache.Clear();
+        _methodInfoLayout = null;
     }
 }

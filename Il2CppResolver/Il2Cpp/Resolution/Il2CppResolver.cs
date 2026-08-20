@@ -133,4 +133,15 @@ public sealed class Il2CppResolver : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
+
+    /// <summary>
+    /// Invalidates all assembly, type, method and native code results cached for the current target process.
+    /// Subsequent resolution operations interrogate the live IL2CPP runtime again and rebuild compatibility evidence when required.
+    /// This operation is useful when the target may have loaded additional assemblies or otherwise changed its runtime state after the resolver was attached.
+    /// </summary>
+    public void ClearCache()
+    {
+        ThrowIfDisposed();
+        _session.ClearCache();
+    }
 }
