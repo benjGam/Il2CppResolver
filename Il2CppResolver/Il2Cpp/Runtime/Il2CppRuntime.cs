@@ -1,4 +1,5 @@
 ﻿using System.Buffers.Binary;
+using System.Text;
 using UnityIl2CppResolver.Il2Cpp.Discovery;
 using UnityIl2CppResolver.Native.Remote;
 
@@ -162,5 +163,62 @@ internal sealed class Il2CppRuntime
         }
 
         return results.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Resolves an IL2CPP class from an image, namespace and type name through the public runtime API.
+    /// Namespace and type identifiers are encoded as null-terminated UTF-8 strings and exist inside the target process only for the duration of the native call.
+    /// </summary>
+    /// <param name="imageAddress">The native <c>Il2CppImage*</c> containing the requested type.</param>
+    /// <param name="namespaceName">The managed namespace containing the requested type. An empty namespace is valid.</param>
+    /// <param name="typeName">The managed type name to resolve.</param>
+    /// <param name="timeout">The maximum amount of time allowed for the native runtime call to complete.</param>
+    /// <returns>The native <c>Il2CppClass*</c> address when the class exists, or zero when IL2CPP cannot resolve the requested type.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="imageAddress"/> is zero.
+    /// </exception>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="namespaceName"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="typeName"/> is empty or when either managed identifier contains an embedded null character.
+    /// </exception>
+    public nint GetClass(nint imageAddress, string namespaceName, string typeName, TimeSpan timeout)
+    {
+        if (imageAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(imageAddress), "The IL2CPP image pointer cannot be zero.");
+
+        ArgumentNullException.ThrowIfNull(namespaceName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(typeName);
+
+        byte[] namespaceBuffer = EncodeNullTerminatedUtf8(namespaceName, nameof(namespaceName));
+        byte[] typeNameBuffer = EncodeNullTerminatedUtf8(typeName, nameof(typeName));
+
+        RemoteCallResult result = _remoteCall.InvokePointerWithBufferArguments(_exports.ClassFromName, imageAddress, namespaceBuffer, typeNameBuffer, timeout);
+
+        return result.ReturnValue;
+    }
+
+    /// <summary>
+    /// Encodes a managed string as a null-terminated UTF-8 buffer suitable for a native <c>const char*</c> argument.
+    /// Embedded null characters are rejected because they would silently truncate the semantic identifier observed by the native API.
+    /// </summary>
+    /// <param name="value">The managed value to encode.</param>
+    /// <param name="parameterName">The originating parameter name used when reporting invalid input.</param>
+    /// <returns>A UTF-8 byte sequence containing exactly one trailing null terminator.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="value"/> contains an embedded null character.
+    /// </exception>
+    private static byte[] EncodeNullTerminatedUtf8(string value, string parameterName)
+    {
+        if (value.IndexOf('\0') >= 0)
+            throw new ArgumentException("Native string arguments cannot contain embedded null characters.", parameterName);
+
+        int byteCount = Encoding.UTF8.GetByteCount(value);
+        byte[] buffer = new byte[checked(byteCount + 1)];
+
+        Encoding.UTF8.GetBytes(value, buffer);
+
+        return buffer;
     }
 }
