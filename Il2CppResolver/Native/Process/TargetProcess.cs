@@ -64,7 +64,8 @@ public sealed class TargetProcess : IDisposable
             {
                 NativeMethods.WaitObject0 => true,
                 NativeMethods.WaitTimeout => false,
-                _ => throw new Win32Exception(Marshal.GetLastWin32Error(), $"Unable to query the state of process {ProcessId}.")
+                NativeMethods.WaitFailed => throw new Win32Exception(Marshal.GetLastWin32Error(), $"Unable to query the state of process {ProcessId}."),
+                _ => throw new InvalidOperationException($"Unexpected wait result 0x{result:X8} while querying process {ProcessId}.")
             };
         }
     }
@@ -103,7 +104,10 @@ public sealed class TargetProcess : IDisposable
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("TargetProcess currently supports Windows only.");
 
-        ProcessAccessRights accessRights = ProcessAccessRights.QueryLimitedInformation | ProcessAccessRights.VirtualMemoryRead;
+        ProcessAccessRights accessRights = ProcessAccessRights.QueryLimitedInformation |
+                                   ProcessAccessRights.VirtualMemoryRead |
+                                   ProcessAccessRights.Synchronize;
+
         SafeProcessHandle handle = NativeMethods.OpenProcess(accessRights, false, processId);
 
         if (handle.IsInvalid)

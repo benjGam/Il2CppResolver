@@ -10,6 +10,11 @@ namespace UnityIl2CppResolver.Native.Process;
 internal static partial class NativeMethods
 {
     /// <summary>
+    /// Represents the value returned by <c>WaitForSingleObject</c> when the wait operation fails.
+    /// When this value is returned, the associated Windows error code can be retrieved through <c>Marshal.GetLastWin32Error</c>.
+    /// </summary>
+    internal const uint WaitFailed = 0xFFFFFFFF;
+    /// <summary>
     /// Represents the result returned by <c>WaitForSingleObject</c> when the target object is signaled.
     /// For a process handle, this indicates that the target process has terminated.
     /// </summary>

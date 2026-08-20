@@ -2,7 +2,7 @@
 
 /// <summary>
 /// Defines the native Windows access rights that can be requested when opening a target process.
-/// The resolver deliberately uses the smallest subset required by each architectural layer instead of requesting unrestricted process access.
+/// The resolver deliberately requests only the permissions required by its native read-only inspection layer.
 /// </summary>
 [Flags]
 internal enum ProcessAccessRights : uint
@@ -13,7 +13,13 @@ internal enum ProcessAccessRights : uint
     VirtualMemoryRead = 0x0010,
 
     /// <summary>
-    /// Allows limited process information queries such as architecture and lifecycle inspection.
+    /// Allows limited process information queries such as architecture inspection.
     /// </summary>
-    QueryLimitedInformation = 0x1000
+    QueryLimitedInformation = 0x1000,
+
+    /// <summary>
+    /// Allows synchronization operations to wait on the process handle.
+    /// This permission is required by <c>WaitForSingleObject</c> and is used to determine whether the target process has terminated.
+    /// </summary>
+    Synchronize = 0x00100000
 }
