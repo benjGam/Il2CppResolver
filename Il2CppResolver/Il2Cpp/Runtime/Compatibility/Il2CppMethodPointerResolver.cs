@@ -17,19 +17,16 @@ internal sealed class Il2CppMethodPointerResolver
     private readonly Il2CppTarget _target;
 
     /// <summary>
-    /// Defines the explicit <c>MethodInfo</c> layout used to locate the direct native method pointer.
+    /// Defines the explicit <c>MethodInfo</c> structural layout used to locate the direct native method pointer.
     /// </summary>
-    private readonly IIl2CppMethodInfoLayout _layout;
+    private readonly Il2CppMethodInfoLayout _layout;
 
     /// <summary>
-    /// Initializes native method-pointer mapping for the specified IL2CPP target and compatibility profile.
+    /// Initializes native method-pointer mapping for the specified IL2CPP target and structural compatibility profile.
     /// </summary>
     /// <param name="target">The validated IL2CPP target containing the resolved runtime method.</param>
-    /// <param name="layout">The explicit runtime layout used to interpret <c>MethodInfo</c>.</param>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="target"/> or <paramref name="layout"/> is <see langword="null"/>.
-    /// </exception>
-    public Il2CppMethodPointerResolver(Il2CppTarget target, IIl2CppMethodInfoLayout layout)
+    /// <param name="layout">The explicit <c>MethodInfo</c> layout used to locate the direct native method pointer.</param>
+    public Il2CppMethodPointerResolver(Il2CppTarget target, Il2CppMethodInfoLayout layout)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(layout);

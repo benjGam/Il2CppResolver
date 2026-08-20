@@ -9,7 +9,7 @@ internal sealed record Il2CppMethodInfoLayoutDetectionResult
     /// <summary>
     /// Gets the unique compatibility layout that satisfied every validation invariant.
     /// </summary>
-    public IIl2CppMethodInfoLayout Layout { get; }
+    public Il2CppMethodInfoLayout Layout { get; }
 
     /// <summary>
     /// Gets the number of distinct <c>MethodInfo</c> instances whose candidate direct method pointer resolved to an executable section inside <c>GameAssembly.dll</c>.
@@ -28,7 +28,7 @@ internal sealed record Il2CppMethodInfoLayoutDetectionResult
     /// <param name="layout">The unique compatibility layout accepted by validation.</param>
     /// <param name="validatedMethodCount">The number of executable method pointers supporting the layout.</param>
     /// <param name="nullMethodPointerCount">The number of null candidate pointers ignored during validation.</param>
-    internal Il2CppMethodInfoLayoutDetectionResult(IIl2CppMethodInfoLayout layout, int validatedMethodCount, int nullMethodPointerCount)
+    internal Il2CppMethodInfoLayoutDetectionResult(Il2CppMethodInfoLayout layout, int validatedMethodCount, int nullMethodPointerCount)
     {
         ArgumentNullException.ThrowIfNull(layout);
         ArgumentOutOfRangeException.ThrowIfNegative(validatedMethodCount);

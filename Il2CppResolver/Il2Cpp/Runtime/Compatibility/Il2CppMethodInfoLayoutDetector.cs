@@ -17,10 +17,10 @@ internal sealed class Il2CppMethodInfoLayoutDetector
     private readonly Il2CppTarget _target;
 
     /// <summary>
-    /// Contains the explicit compatibility profiles considered by the detector.
-    /// Candidate ordering has no effect on selection because ambiguous successful profiles are rejected.
+    /// Contains the explicit <c>MethodInfo</c> structural compatibility profiles considered during detection.
+    /// Candidate ordering has no influence on selection because ambiguous successful profiles are rejected.
     /// </summary>
-    private readonly IReadOnlyList<IIl2CppMethodInfoLayout> _candidates;
+    private readonly IReadOnlyList<Il2CppMethodInfoLayout> _candidates;
 
     /// <summary>
     /// Defines the minimum amount of positive executable-pointer evidence required before a compatibility profile can be accepted.
@@ -31,18 +31,9 @@ internal sealed class Il2CppMethodInfoLayoutDetector
     /// Initializes a compatibility-layout detector for the specified IL2CPP target.
     /// </summary>
     /// <param name="target">The validated IL2CPP target whose runtime layout should be detected.</param>
-    /// <param name="candidates">The explicit compatibility profiles available for validation.</param>
+    /// <param name="candidates">The explicit structural compatibility profiles available for validation.</param>
     /// <param name="minimumValidatedMethodCount">The minimum number of distinct executable method pointers required to accept a profile.</param>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="target"/> or <paramref name="candidates"/> is <see langword="null"/>.
-    /// </exception>
-    /// <exception cref="ArgumentException">
-    /// Thrown when no candidate profiles are supplied, when candidate names are duplicated or when a candidate exposes an invalid pointer offset.
-    /// </exception>
-    /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when <paramref name="minimumValidatedMethodCount"/> is less than one.
-    /// </exception>
-    public Il2CppMethodInfoLayoutDetector(Il2CppTarget target, IReadOnlyList<IIl2CppMethodInfoLayout> candidates, int minimumValidatedMethodCount = 5)
+    public Il2CppMethodInfoLayoutDetector(Il2CppTarget target, IReadOnlyList<Il2CppMethodInfoLayout> candidates, int minimumValidatedMethodCount = 5)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(candidates);
@@ -55,18 +46,12 @@ internal sealed class Il2CppMethodInfoLayoutDetector
 
         HashSet<string> names = new(StringComparer.Ordinal);
 
-        foreach (IIl2CppMethodInfoLayout candidate in candidates)
+        foreach (Il2CppMethodInfoLayout candidate in candidates)
         {
             ArgumentNullException.ThrowIfNull(candidate);
 
             if (!names.Add(candidate.Name))
                 throw new ArgumentException($"Duplicate IL2CPP MethodInfo compatibility profile name '{candidate.Name}'.", nameof(candidates));
-
-            if (candidate.DirectMethodPointerOffset < 0)
-                throw new ArgumentException($"Compatibility profile '{candidate.Name}' exposes a negative direct method pointer offset.", nameof(candidates));
-
-            if (candidate.DirectMethodPointerOffset % IntPtr.Size != 0)
-                throw new ArgumentException($"Compatibility profile '{candidate.Name}' exposes unaligned direct method pointer offset 0x{candidate.DirectMethodPointerOffset:X}.", nameof(candidates));
         }
 
         _target = target;
@@ -101,7 +86,7 @@ internal sealed class Il2CppMethodInfoLayoutDetector
         List<Il2CppMethodInfoLayoutDetectionResult> matches = new();
         List<string> failures = new();
 
-        foreach (IIl2CppMethodInfoLayout candidate in _candidates)
+        foreach (Il2CppMethodInfoLayout candidate in _candidates)
         {
             bool valid = TryValidateCandidate(candidate, distinctMethods, out int validatedMethodCount, out int nullMethodPointerCount, out string? failureReason);
 
@@ -145,7 +130,7 @@ internal sealed class Il2CppMethodInfoLayoutDetector
     /// <param name="nullMethodPointerCount">Receives the number of candidate pointers that were null.</param>
     /// <param name="failureReason">Receives a diagnostic description when validation fails.</param>
     /// <returns><see langword="true"/> when the candidate contains no invalid non-null pointer; otherwise <see langword="false"/>.</returns>
-    private bool TryValidateCandidate(IIl2CppMethodInfoLayout candidate, IReadOnlyList<nint> methodAddresses, out int validatedMethodCount, out int nullMethodPointerCount, out string? failureReason)
+    private bool TryValidateCandidate(Il2CppMethodInfoLayout candidate, IReadOnlyList<nint> methodAddresses, out int validatedMethodCount, out int nullMethodPointerCount, out string? failureReason)
     {
         validatedMethodCount = 0;
         nullMethodPointerCount = 0;
@@ -234,7 +219,7 @@ internal sealed class Il2CppMethodInfoLayoutDetector
     /// <param name="nullMethodPointerCount">Receives the number of candidate pointers that were null and therefore ignored.</param>
     /// <param name="failureReason">Receives a diagnostic description when validation fails.</param>
     /// <returns><see langword="true"/> when the candidate contains no invalid non-null pointer; otherwise <see langword="false"/>.</returns>
-    private bool TryValidateCandidate(IIl2CppMethodInfoLayout candidate, IReadOnlyList<Il2CppMethodInfo> methods, out int validatedMethodCount, out int nullMethodPointerCount, out string? failureReason)
+    private bool TryValidateCandidate(Il2CppMethodInfoLayout candidate, IReadOnlyList<Il2CppMethodInfo> methods, out int validatedMethodCount, out int nullMethodPointerCount, out string? failureReason)
     {
         validatedMethodCount = 0;
         nullMethodPointerCount = 0;

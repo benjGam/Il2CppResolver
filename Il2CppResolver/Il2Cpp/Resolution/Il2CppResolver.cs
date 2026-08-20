@@ -101,6 +101,20 @@ public sealed class Il2CppResolver : IDisposable
     }
 
     /// <summary>
+    /// Resolves a managed method and maps its runtime identity to validated direct native executable code using an explicitly selected <c>MethodInfo</c> structural layout.
+    /// This overload bypasses automatic layout detection and is intended for consumers that already know the runtime structure used by their target.
+    /// All native pointer and executable-section validations remain active.
+    /// </summary>
+    /// <param name="query">The semantic method query identifying the requested overload.</param>
+    /// <param name="layout">The explicit <c>MethodInfo</c> layout used to locate the direct method pointer.</param>
+    /// <returns>The resolved method together with its validated native code address and compatibility evidence.</returns>
+    public ResolvedMethodCode ResolveMethodCode(MethodQuery query, Il2CppMethodInfoLayout layout)
+    {
+        ThrowIfDisposed();
+        return _session.ResolveMethodCode(query, layout);
+    }
+
+    /// <summary>
     /// Resolves a managed method and maps its runtime identity to validated direct native executable code.
     /// Runtime <c>MethodInfo</c> layout detection is performed automatically when native code mapping is first requested.
     /// </summary>

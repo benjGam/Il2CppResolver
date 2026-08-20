@@ -75,10 +75,11 @@ internal sealed class ResolutionSession : IDisposable
     private readonly TimeSpan _callTimeout;
 
     /// <summary>
-    /// Stores the target-wide <c>MethodInfo</c> compatibility layout after it has been successfully detected.
-    /// A null value indicates that native method-code mapping has not yet required layout detection.
+    /// Stores the target-wide <c>MethodInfo</c> structural compatibility layout after successful automatic detection.
+    /// A null value indicates that automatic native method-code mapping has not yet required layout detection.
+    /// Explicitly supplied layouts do not modify this value.
     /// </summary>
-    private IIl2CppMethodInfoLayout? _methodInfoLayout;
+    private Il2CppMethodInfoLayout? _methodInfoLayout;
 
     /// <summary>
     /// Indicates whether this session has released ownership of its target process.
@@ -136,12 +137,12 @@ internal sealed class ResolutionSession : IDisposable
             ResolutionCache cache = new();
             RuntimeResolutionBackend backend = new(runtime, cache, callTimeout);
 
-            IIl2CppMethodInfoLayout[] layouts =
+            Il2CppMethodInfoLayout[] methodLayouts =
             {
-            DirectMethodPointerFirstLayout.Instance
-        };
+                Il2CppMethodInfoLayout.DirectMethodPointerFirstX64
+            };
 
-            Il2CppMethodInfoLayoutDetector layoutDetector = new(target, layouts, MinimumValidatedMethodCount);
+            Il2CppMethodInfoLayoutDetector layoutDetector = new(target, methodLayouts, MinimumValidatedMethodCount);
             Il2CppClassLayout[] classLayouts =
             {
                 Il2CppClassLayout.Class29_1X64,
@@ -193,25 +194,63 @@ internal sealed class ResolutionSession : IDisposable
     }
 
     /// <summary>
-    /// Resolves a semantic method and maps its runtime <c>MethodInfo</c> to validated executable native code.
-    /// Both semantic resolution and validated native mappings are reused from the session cache when available.
+    /// Resolves a semantic method and maps its runtime <c>MethodInfo</c> to validated executable native code using an automatically detected structural layout.
+    /// Layout detection is performed lazily from multiple methods of the declaring runtime type and the resulting target-wide profile is reused for subsequent automatic mappings.
     /// </summary>
     /// <param name="query">The complete semantic method signature whose native implementation should be resolved.</param>
     /// <returns>The resolved semantic method together with its validated direct native code address.</returns>
     public ResolvedMethodCode ResolveMethodCode(MethodQuery query)
     {
         ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(query);
+
+        ResolvedMethod method = _backend.ResolveMethod(query);
+        Il2CppMethodInfoLayout layout = GetMethodInfoLayout(method.DeclaringType);
+
+        return ResolveMethodCode(method, layout);
+    }
+
+    /// <summary>
+    /// Resolves a semantic method and maps its runtime <c>MethodInfo</c> to native executable code using the exact structural layout explicitly supplied by the caller.
+    /// This path bypasses automatic <c>MethodInfo</c> layout detection entirely and does not modify any layout previously detected for the current session.
+    /// The candidate native address remains subject to all normal GameAssembly and executable-section validations.
+    /// </summary>
+    /// <param name="query">The complete semantic method signature whose native implementation should be resolved.</param>
+    /// <param name="layout">The explicit <c>MethodInfo</c> structural layout used to locate the direct method pointer.</param>
+    /// <returns>The resolved semantic method together with its validated direct native code address.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="query"/> or <paramref name="layout"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the supplied structural layout produces a null, out-of-image or non-executable native method pointer.
+    /// </exception>
+    public ResolvedMethodCode ResolveMethodCode(MethodQuery query, Il2CppMethodInfoLayout layout)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(layout);
 
         ResolvedMethod method = _backend.ResolveMethod(query);
 
-        if (_cache.TryGetMethodCode(method.MethodInfoAddress, out ResolvedMethodCode? cachedCode))
+        return ResolveMethodCode(method, layout);
+    }
+
+    /// <summary>
+    /// Maps an already resolved semantic method to validated native code through the specified structural compatibility layout.
+    /// Compatible results are reused from the session cache when available.
+    /// </summary>
+    /// <param name="method">The semantically resolved runtime method.</param>
+    /// <param name="layout">The explicit or automatically detected <c>MethodInfo</c> layout.</param>
+    /// <returns>The validated native method-code mapping.</returns>
+    private ResolvedMethodCode ResolveMethodCode(ResolvedMethod method, Il2CppMethodInfoLayout layout)
+    {
+        if (_cache.TryGetMethodCode(method.MethodInfoAddress, layout, out ResolvedMethodCode? cachedCode))
             return cachedCode;
 
-        IIl2CppMethodInfoLayout layout = GetMethodInfoLayout(method.DeclaringType);
         Il2CppMethodPointerResolver pointerResolver = new(_target, layout);
         ResolvedMethodCode result = pointerResolver.Resolve(method);
 
-        _cache.StoreMethodCode(result);
+        _cache.StoreMethodCode(result, layout);
 
         return result;
     }
@@ -224,7 +263,7 @@ internal sealed class ResolutionSession : IDisposable
     /// <exception cref="InvalidDataException">
     /// Thrown when the evidence type does not expose enough methods or when no unique compatibility profile can be validated.
     /// </exception>
-    private IIl2CppMethodInfoLayout GetMethodInfoLayout(ResolvedType evidenceType)
+    private Il2CppMethodInfoLayout GetMethodInfoLayout(ResolvedType evidenceType)
     {
         if (_methodInfoLayout is not null)
             return _methodInfoLayout;

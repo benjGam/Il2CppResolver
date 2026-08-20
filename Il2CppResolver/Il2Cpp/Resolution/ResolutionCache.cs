@@ -28,9 +28,15 @@ internal sealed class ResolutionCache
     private readonly Dictionary<string, ResolvedMethod> _methods = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// Stores validated native code mappings indexed by the target-specific <c>MethodInfo*</c> address that produced them.
+    /// Identifies one native method-code mapping by both its target-specific <c>MethodInfo*</c> identity and the exact structural compatibility profile used to interpret it.
+    /// The diagnostic profile name forms part of the identity because <see cref="ResolvedMethodCode"/> preserves that name as resolution evidence.
     /// </summary>
-    private readonly Dictionary<nint, ResolvedMethodCode> _methodCodes = new();
+    private readonly record struct MethodCodeCacheKey(nint MethodInfoAddress, string CompatibilityProfile, int DirectMethodPointerOffset);
+
+    /// <summary>
+    /// Stores validated native method-code mappings indexed by their runtime method identity and the exact structural layout used to obtain them.
+    /// </summary>
+    private readonly Dictionary<MethodCodeCacheKey, ResolvedMethodCode> _methodCodes = new();
 
     /// <summary>
     /// Stores field resolution results indexed by their exact declaring type and field-name identity.
@@ -121,23 +127,38 @@ private readonly Dictionary<string, ResolvedFieldStorage> _fieldStorages = new(S
     /// <param name="methodInfoAddress">The target-specific native <c>MethodInfo*</c> address.</param>
     /// <param name="methodCode">Receives the cached native method-code mapping when one exists.</param>
     /// <returns><see langword="true"/> when a cached mapping exists; otherwise <see langword="false"/>.</returns>
-    public bool TryGetMethodCode(nint methodInfoAddress, out ResolvedMethodCode? methodCode)
+    /// <summary>
+    /// Attempts to retrieve a previously validated native code mapping for the specified runtime method and structural layout.
+    /// </summary>
+    /// <param name="methodInfoAddress">The target-specific native <c>MethodInfo*</c> address.</param>
+    /// <param name="layout">The exact <c>MethodInfo</c> layout requested by the caller.</param>
+    /// <param name="methodCode">Receives the compatible cached native method-code mapping when one exists.</param>
+    /// <returns><see langword="true"/> when a compatible cached mapping exists; otherwise <see langword="false"/>.</returns>
+    public bool TryGetMethodCode(nint methodInfoAddress, Il2CppMethodInfoLayout layout, out ResolvedMethodCode? methodCode)
     {
         if (methodInfoAddress == 0)
             throw new ArgumentOutOfRangeException(nameof(methodInfoAddress), "The IL2CPP MethodInfo address cannot be zero.");
 
-        return _methodCodes.TryGetValue(methodInfoAddress, out methodCode);
+        ArgumentNullException.ThrowIfNull(layout);
+
+        MethodCodeCacheKey key = new(methodInfoAddress, layout.Name, layout.DirectMethodPointerOffset);
+
+        return _methodCodes.TryGetValue(key, out methodCode);
     }
 
     /// <summary>
-    /// Stores a validated native code mapping using the underlying target-specific <c>MethodInfo*</c> address as its identity.
+    /// Stores a validated native method-code mapping using both its target-specific <c>MethodInfo*</c> identity and the exact structural layout that produced it.
     /// </summary>
     /// <param name="methodCode">The validated native method-code mapping to cache.</param>
-    public void StoreMethodCode(ResolvedMethodCode methodCode)
+    /// <param name="layout">The structural layout used to produce the mapping.</param>
+    public void StoreMethodCode(ResolvedMethodCode methodCode, Il2CppMethodInfoLayout layout)
     {
         ArgumentNullException.ThrowIfNull(methodCode);
+        ArgumentNullException.ThrowIfNull(layout);
 
-        _methodCodes[methodCode.Method.MethodInfoAddress] = methodCode;
+        MethodCodeCacheKey key = new(methodCode.Method.MethodInfoAddress, layout.Name, layout.DirectMethodPointerOffset);
+
+        _methodCodes[key] = methodCode;
     }
 
     /// <summary>
