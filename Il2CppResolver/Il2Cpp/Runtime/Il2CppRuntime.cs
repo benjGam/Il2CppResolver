@@ -25,6 +25,21 @@ internal sealed class Il2CppRuntime
     private const int MaximumImageNameLength = 1024;
 
     /// <summary>
+    /// Defines the defensive maximum number of methods accepted while enumerating a single IL2CPP class.
+    /// </summary>
+    private const int MaximumMethodCount = 65536;
+
+    /// <summary>
+    /// Defines the defensive maximum parameter count accepted for a single IL2CPP method.
+    /// </summary>
+    private const uint MaximumMethodParameterCount = 1024;
+
+    /// <summary>
+    /// Defines the maximum UTF-8 byte length accepted for runtime method and type names.
+    /// </summary>
+    private const int MaximumRuntimeNameLength = 4096;
+
+    /// <summary>
     /// Represents the validated IL2CPP target whose native runtime is inspected by this instance.
     /// </summary>
     private readonly Il2CppTarget _target;
@@ -220,5 +235,158 @@ internal sealed class Il2CppRuntime
         Encoding.UTF8.GetBytes(value, buffer);
 
         return buffer;
+    }
+
+    /// <summary>
+    /// Retrieves the native methods declared by the specified IL2CPP class.
+    /// Enumeration follows the iterator contract of <c>il2cpp_class_get_methods</c> while keeping iterator storage short-lived for every remote invocation.
+    /// </summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> whose declared methods should be enumerated.</param>
+    /// <param name="timeout">The maximum amount of time allowed for each individual runtime call.</param>
+    /// <returns>An immutable snapshot containing the discovered native <c>MethodInfo*</c> addresses.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="classAddress"/> is zero.
+    /// </exception>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the runtime iterator fails to progress or exceeds the defensive method-count limit.
+    /// </exception>
+    public IReadOnlyList<nint> GetMethods(nint classAddress, TimeSpan timeout)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class pointer cannot be zero.");
+
+        List<nint> methods = new();
+        nuint iterator = 0;
+
+        while (methods.Count < MaximumMethodCount)
+        {
+            nuint previousIterator = iterator;
+            RemoteCallPointerSizeOutResult result = _remoteCall.InvokePointerWithNuintRefArgument(_exports.ClassGetMethods, classAddress, iterator, timeout);
+            iterator = result.OutValue;
+
+            if (result.ReturnValue == 0)
+                return methods.AsReadOnly();
+
+            if (previousIterator != 0 && iterator == previousIterator)
+                throw new InvalidDataException($"IL2CPP method enumeration for class 0x{classAddress:X} returned a method without advancing its iterator.");
+
+            methods.Add(result.ReturnValue);
+        }
+
+        throw new InvalidDataException($"IL2CPP method enumeration for class 0x{classAddress:X} exceeded the defensive limit of {MaximumMethodCount} methods.");
+    }
+
+    /// <summary>
+    /// Retrieves the semantic name associated with a runtime <c>MethodInfo</c>.
+    /// </summary>
+    /// <param name="methodAddress">The native <c>MethodInfo*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The managed method name exposed by IL2CPP.</returns>
+    public string GetMethodName(nint methodAddress, TimeSpan timeout)
+    {
+        if (methodAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(methodAddress), "The IL2CPP method pointer cannot be zero.");
+
+        RemoteCallResult result = _remoteCall.InvokePointer(_exports.MethodGetName, methodAddress, timeout);
+
+        if (result.ReturnValue == 0)
+            throw new InvalidDataException($"IL2CPP returned a null name pointer for method 0x{methodAddress:X}.");
+
+        string name = _target.Memory.ReadNullTerminatedUtf8(result.ReturnValue, MaximumRuntimeNameLength);
+
+        if (string.IsNullOrWhiteSpace(name))
+            throw new InvalidDataException($"IL2CPP returned an empty name for method 0x{methodAddress:X}.");
+
+        return name;
+    }
+
+    /// <summary>
+    /// Retrieves the complete semantic signature of a runtime <c>MethodInfo</c>.
+    /// Parameter and return types are resolved through the public IL2CPP type inspection API.
+    /// </summary>
+    /// <param name="methodAddress">The native <c>MethodInfo*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
+    /// <returns>A semantic runtime description of the requested method.</returns>
+    public Il2CppMethodInfo GetMethodInfo(nint methodAddress, TimeSpan timeout)
+    {
+        string name = GetMethodName(methodAddress, timeout);
+        uint parameterCount = _remoteCall.InvokeUInt32(_exports.MethodGetParamCount, methodAddress, timeout);
+
+        if (parameterCount > MaximumMethodParameterCount)
+            throw new InvalidDataException($"IL2CPP method 0x{methodAddress:X} reported an unreasonable parameter count of {parameterCount}.");
+
+        RemoteCallResult returnTypeResult = _remoteCall.InvokePointer(_exports.MethodGetReturnType, methodAddress, timeout);
+
+        if (returnTypeResult.ReturnValue == 0)
+            throw new InvalidDataException($"IL2CPP returned a null return type for method 0x{methodAddress:X}.");
+
+        string returnTypeName = GetTypeName(returnTypeResult.ReturnValue, timeout);
+        List<string> parameterTypeNames = new(checked((int)parameterCount));
+
+        for (uint index = 0; index < parameterCount; index++)
+        {
+            RemoteCallResult parameterResult = _remoteCall.InvokePointer(_exports.MethodGetParam, methodAddress, (nuint)index, timeout);
+
+            if (parameterResult.ReturnValue == 0)
+                throw new InvalidDataException($"IL2CPP returned a null parameter type for method 0x{methodAddress:X} at index {index}.");
+
+            parameterTypeNames.Add(GetTypeName(parameterResult.ReturnValue, timeout));
+        }
+
+        return new Il2CppMethodInfo(methodAddress, name, returnTypeName, parameterTypeNames);
+    }
+
+    /// <summary>
+    /// Retrieves the semantic UTF-8 name of an IL2CPP type and releases the temporary native string allocated by the runtime API.
+    /// </summary>
+    /// <param name="typeAddress">The native <c>Il2CppType*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for each required native runtime call.</param>
+    /// <returns>The semantic managed type name.</returns>
+    private string GetTypeName(nint typeAddress, TimeSpan timeout)
+    {
+        if (typeAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(typeAddress), "The IL2CPP type pointer cannot be zero.");
+
+        RemoteCallResult result = _remoteCall.InvokePointer(_exports.TypeGetName, typeAddress, timeout);
+
+        if (result.ReturnValue == 0)
+            throw new InvalidDataException($"IL2CPP returned a null type-name pointer for type 0x{typeAddress:X}.");
+
+        nint nameAddress = result.ReturnValue;
+        string name;
+
+        try
+        {
+            name = _target.Memory.ReadNullTerminatedUtf8(nameAddress, MaximumRuntimeNameLength);
+        }
+        catch
+        {
+            TryFreeRuntimeString(nameAddress, timeout);
+            throw;
+        }
+
+        _remoteCall.InvokeVoid(_exports.Free, nameAddress, timeout);
+
+        if (string.IsNullOrWhiteSpace(name))
+            throw new InvalidDataException($"IL2CPP returned an empty semantic name for type 0x{typeAddress:X}.");
+
+        return name;
+    }
+
+    /// <summary>
+    /// Attempts to release an IL2CPP-owned string while preserving an exception that has already occurred during string processing.
+    /// Cleanup failure is intentionally suppressed only on this exceptional path so it cannot replace the original diagnostic.
+    /// </summary>
+    /// <param name="address">The IL2CPP-owned string address to release.</param>
+    /// <param name="timeout">The maximum duration allowed for the cleanup call.</param>
+    private void TryFreeRuntimeString(nint address, TimeSpan timeout)
+    {
+        try
+        {
+            _remoteCall.InvokeVoid(_exports.Free, address, timeout);
+        }
+        catch
+        {
+        }
     }
 }

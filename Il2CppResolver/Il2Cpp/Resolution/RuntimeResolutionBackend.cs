@@ -112,6 +112,84 @@ internal sealed class RuntimeResolutionBackend
     }
 
     /// <summary>
+    /// Resolves a managed method by declaring type, method name and ordered parameter type names.
+    /// Candidate methods are first filtered by name before their complete signatures are inspected so unnecessary IL2CPP type-name allocations and remote calls are avoided.
+    /// </summary>
+    /// <param name="query">The semantic method query identifying the requested overload.</param>
+    /// <returns>The unique runtime <c>MethodInfo</c> whose semantic signature matches the query.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="query"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="KeyNotFoundException">
+    /// Thrown when no declared method matches the requested semantic signature.
+    /// </exception>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when multiple runtime methods match the same requested signature.
+    /// </exception>
+    public ResolvedMethod ResolveMethod(MethodQuery query)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        ResolvedType declaringType = ResolveType(query.DeclaringType);
+        IReadOnlyList<nint> methods = _runtime.GetMethods(declaringType.ClassAddress, _callTimeout);
+        Il2CppMethodInfo? match = null;
+
+        foreach (nint methodAddress in methods)
+        {
+            string methodName = _runtime.GetMethodName(methodAddress, _callTimeout);
+
+            if (!string.Equals(methodName, query.Name, StringComparison.Ordinal))
+                continue;
+
+            Il2CppMethodInfo method = _runtime.GetMethodInfo(methodAddress, _callTimeout);
+
+            if (!ParametersMatch(method.ParameterTypeNames, query.ParameterTypeNames))
+                continue;
+
+            if (match is not null)
+                throw new InvalidDataException($"Multiple IL2CPP methods match semantic signature '{FormatMethodSignature(query)}'.");
+
+            match = method;
+        }
+
+        if (match is null)
+            throw new KeyNotFoundException($"IL2CPP method '{FormatMethodSignature(query)}' was not found.");
+
+        return new ResolvedMethod(query, declaringType, match.MethodAddress, match.ReturnTypeName, match.ParameterTypeNames);
+    }
+
+    /// <summary>
+    /// Determines whether two ordered semantic parameter type sequences identify the same runtime method signature.
+    /// </summary>
+    /// <param name="runtimeParameters">The parameter types reported by the IL2CPP runtime.</param>
+    /// <param name="requestedParameters">The parameter types requested by the semantic query.</param>
+    /// <returns><see langword="true"/> when both parameter lists contain the same type names in the same order; otherwise <see langword="false"/>.</returns>
+    private static bool ParametersMatch(IReadOnlyList<string> runtimeParameters, IReadOnlyList<string> requestedParameters)
+    {
+        if (runtimeParameters.Count != requestedParameters.Count)
+            return false;
+
+        for (int index = 0; index < runtimeParameters.Count; index++)
+        {
+            if (!string.Equals(runtimeParameters[index], requestedParameters[index], StringComparison.Ordinal))
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Formats a semantic method query into a compact diagnostic signature.
+    /// </summary>
+    /// <param name="query">The method query to format.</param>
+    /// <returns>A readable fully qualified method signature suitable for diagnostics.</returns>
+    private static string FormatMethodSignature(MethodQuery query)
+    {
+        string parameters = string.Join(", ", query.ParameterTypeNames);
+        return $"{query.DeclaringType.Namespace}.{query.DeclaringType.Name}.{query.Name}({parameters})";
+    }
+
+    /// <summary>
     /// Normalizes an assembly identifier for semantic comparison by removing conventional managed image suffixes while preserving the remaining assembly identity.
     /// </summary>
     /// <param name="name">The simple assembly name or runtime image name to normalize.</param>

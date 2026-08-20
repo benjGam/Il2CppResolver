@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text;
 using UnityIl2CppResolver.Native.Process;
 
 namespace UnityIl2CppResolver.Native.Memory;
@@ -202,5 +203,49 @@ public sealed class ProcessMemory
         }
 
         throw new InvalidDataException($"Remote ASCII string at address 0x{address:X} does not terminate within {maximumLength} byte(s).");
+    }
+
+    /// <summary>
+    /// Reads a null-terminated UTF-8 string from the specified virtual address in the target process.
+    /// The operation is bounded by a caller-provided maximum length so malformed remote data cannot cause an unbounded read.
+    /// </summary>
+    /// <param name="address">The remote address containing the first UTF-8 byte.</param>
+    /// <param name="maximumLength">The maximum number of bytes inspected before requiring a null terminator.</param>
+    /// <returns>The decoded UTF-8 string without its terminating null byte.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="address"/> is zero or <paramref name="maximumLength"/> is not positive.
+    /// </exception>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when no terminator exists within the requested bound or the byte sequence is not valid UTF-8.
+    /// </exception>
+    public string ReadNullTerminatedUtf8(nint address, int maximumLength)
+    {
+        ValidateAddress(address);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumLength);
+
+        List<byte> bytes = new(Math.Min(maximumLength, 256));
+
+        for (int index = 0; index < maximumLength; index++)
+        {
+            byte value = Read<byte>(address + index);
+
+            if (value != 0)
+            {
+                bytes.Add(value);
+                continue;
+            }
+
+            try
+            {
+                UTF8Encoding encoding = new(false, true);
+                return encoding.GetString(bytes.ToArray());
+            }
+            catch (DecoderFallbackException exception)
+            {
+                throw new InvalidDataException($"Remote UTF-8 string at address 0x{address:X} contains invalid encoded data.", exception);
+            }
+        }
+
+        throw new InvalidDataException($"Remote UTF-8 string at address 0x{address:X} does not terminate within {maximumLength} byte(s).");
     }
 }

@@ -41,6 +41,41 @@ internal sealed class Il2CppRuntimeExports
     private const string ClassGetMethodFromNameExportName = "il2cpp_class_get_method_from_name";
 
     /// <summary>
+    /// Defines the exported IL2CPP function used to enumerate methods declared by a class.
+    /// </summary>
+    private const string ClassGetMethodsExportName = "il2cpp_class_get_methods";
+
+    /// <summary>
+    /// Defines the exported IL2CPP function used to retrieve a method name.
+    /// </summary>
+    private const string MethodGetNameExportName = "il2cpp_method_get_name";
+
+    /// <summary>
+    /// Defines the exported IL2CPP function used to retrieve the number of parameters declared by a method.
+    /// </summary>
+    private const string MethodGetParamCountExportName = "il2cpp_method_get_param_count";
+
+    /// <summary>
+    /// Defines the exported IL2CPP function used to retrieve a method parameter type.
+    /// </summary>
+    private const string MethodGetParamExportName = "il2cpp_method_get_param";
+
+    /// <summary>
+    /// Defines the exported IL2CPP function used to retrieve a method return type.
+    /// </summary>
+    private const string MethodGetReturnTypeExportName = "il2cpp_method_get_return_type";
+
+    /// <summary>
+    /// Defines the exported IL2CPP function used to obtain the semantic name of an IL2CPP type.
+    /// </summary>
+    private const string TypeGetNameExportName = "il2cpp_type_get_name";
+
+    /// <summary>
+    /// Defines the exported IL2CPP function used to release memory allocated by IL2CPP APIs.
+    /// </summary>
+    private const string FreeExportName = "il2cpp_free";
+
+    /// <summary>
     /// Gets the native address of <c>il2cpp_domain_get</c>.
     /// This entry point is the root of runtime domain discovery and will be used by the runtime backend to obtain the active <c>Il2CppDomain</c>.
     /// </summary>
@@ -78,6 +113,42 @@ internal sealed class Il2CppRuntimeExports
     public nint ClassGetMethodFromName { get; }
 
     /// <summary>
+    /// Gets the native address of <c>il2cpp_class_get_methods</c>.
+    /// </summary>
+    public nint ClassGetMethods { get; }
+
+    /// <summary>
+    /// Gets the native address of <c>il2cpp_method_get_name</c>.
+    /// </summary>
+    public nint MethodGetName { get; }
+
+    /// <summary>
+    /// Gets the native address of <c>il2cpp_method_get_param_count</c>.
+    /// </summary>
+    public nint MethodGetParamCount { get; }
+
+    /// <summary>
+    /// Gets the native address of <c>il2cpp_method_get_param</c>.
+    /// </summary>
+    public nint MethodGetParam { get; }
+
+    /// <summary>
+    /// Gets the native address of <c>il2cpp_method_get_return_type</c>.
+    /// </summary>
+    public nint MethodGetReturnType { get; }
+
+    /// <summary>
+    /// Gets the native address of <c>il2cpp_type_get_name</c>.
+    /// Returned strings are owned by IL2CPP and must be released through <see cref="Free"/> after their contents have been copied.
+    /// </summary>
+    public nint TypeGetName { get; }
+
+    /// <summary>
+    /// Gets the native address of <c>il2cpp_free</c>.
+    /// </summary>
+    public nint Free { get; }
+
+    /// <summary>
     /// Initializes a validated table of native IL2CPP runtime entry points.
     /// Instances are created exclusively through <see cref="Resolve(Il2CppTarget)"/> after every required PE export has been validated as a direct native address.
     /// </summary>
@@ -87,7 +158,20 @@ internal sealed class Il2CppRuntimeExports
     /// <param name="imageGetName">The native address of <c>il2cpp_image_get_name</c>.</param>
     /// <param name="classFromName">The native address of <c>il2cpp_class_from_name</c>.</param>
     /// <param name="classGetMethodFromName">The native address of <c>il2cpp_class_get_method_from_name</c>.</param>
-    private Il2CppRuntimeExports(nint domainGet, nint domainGetAssemblies, nint assemblyGetImage, nint imageGetName, nint classFromName, nint classGetMethodFromName)
+    private Il2CppRuntimeExports(
+        nint domainGet,
+        nint domainGetAssemblies,
+        nint assemblyGetImage,
+        nint imageGetName,
+        nint classFromName,
+        nint classGetMethodFromName,
+        nint classGetMethods,
+        nint methodGetName,
+        nint methodGetParamCount,
+        nint methodGetParam,
+        nint methodGetReturnType,
+        nint typeGetName,
+        nint free)
     {
         DomainGet = domainGet;
         DomainGetAssemblies = domainGetAssemblies;
@@ -95,6 +179,13 @@ internal sealed class Il2CppRuntimeExports
         ImageGetName = imageGetName;
         ClassFromName = classFromName;
         ClassGetMethodFromName = classGetMethodFromName;
+        ClassGetMethods = classGetMethods;
+        MethodGetName = methodGetName;
+        MethodGetParamCount = methodGetParamCount;
+        MethodGetParam = methodGetParam;
+        MethodGetReturnType = methodGetReturnType;
+        TypeGetName = typeGetName;
+        Free = free;
     }
 
     /// <summary>
@@ -121,8 +212,28 @@ internal sealed class Il2CppRuntimeExports
         nint imageGetName = ResolveRequiredExport(image, ImageGetNameExportName);
         nint classFromName = ResolveRequiredExport(image, ClassFromNameExportName);
         nint classGetMethodFromName = ResolveRequiredExport(image, ClassGetMethodFromNameExportName);
+        nint classGetMethods = ResolveRequiredExport(image, ClassGetMethodsExportName);
+        nint methodGetName = ResolveRequiredExport(image, MethodGetNameExportName);
+        nint methodGetParamCount = ResolveRequiredExport(image, MethodGetParamCountExportName);
+        nint methodGetParam = ResolveRequiredExport(image, MethodGetParamExportName);
+        nint methodGetReturnType = ResolveRequiredExport(image, MethodGetReturnTypeExportName);
+        nint typeGetName = ResolveRequiredExport(image, TypeGetNameExportName);
+        nint free = ResolveRequiredExport(image, FreeExportName);
 
-        return new Il2CppRuntimeExports(domainGet, domainGetAssemblies, assemblyGetImage, imageGetName, classFromName, classGetMethodFromName);
+        return new Il2CppRuntimeExports(
+            domainGet,
+            domainGetAssemblies,
+            assemblyGetImage,
+            imageGetName,
+            classFromName,
+            classGetMethodFromName,
+            classGetMethods,
+            methodGetName,
+            methodGetParamCount,
+            methodGetParam,
+            methodGetReturnType,
+            typeGetName,
+            free);
     }
 
     /// <summary>
