@@ -50,6 +50,16 @@ internal sealed class RemoteCall
     private const int TwoArgumentPointerTrampolineSize = 56;
 
     /// <summary>
+    /// Represents the exact size in bytes of the x64 trampoline that attaches a remote thread to IL2CPP, invokes a parameterless managed method, strongly roots a non-null result through an opaque pointer-sized GC handle, captures result state and detaches the thread.
+    /// </summary>
+    private const int Il2CppRuntimeInvokeTrampolineSize = 192;
+
+    /// <summary>
+    /// Represents the size in bytes of the remote result block containing the managed return object pointer, exception pointer and opaque pointer-sized strong GC handle.
+    /// </summary>
+    private const int Il2CppRuntimeInvokeResultSize = 24;
+
+    /// <summary>
     /// Represents the target process in which native functions are executed.
     /// The primary process handle remains read-only; stronger execution rights are obtained through short-lived secondary handles.
     /// </summary>
@@ -254,6 +264,63 @@ internal sealed class RemoteCall
     }
 
     /// <summary>
+    /// Invokes <c>il2cpp_runtime_invoke</c> for a parameterless managed method on a remote thread attached to the active IL2CPP domain for the complete call.
+    /// The generated trampoline captures the returned <c>Il2CppObject*</c> and <c>Il2CppException*</c>, roots every non-null return object with an opaque pointer-sized strong GC handle, and only then detaches the thread.
+    /// </summary>
+    /// <param name="threadAttachAddress">The native <c>il2cpp_thread_attach</c> address.</param>
+    /// <param name="threadDetachAddress">The native <c>il2cpp_thread_detach</c> address.</param>
+    /// <param name="runtimeInvokeAddress">The native <c>il2cpp_runtime_invoke</c> address.</param>
+    /// <param name="gcHandleNewAddress">The native <c>il2cpp_gchandle_new</c> address used to retain non-null results across thread detachment.</param>
+    /// <param name="domainAddress">The active <c>Il2CppDomain*</c> address.</param>
+    /// <param name="methodAddress">The parameterless <c>MethodInfo*</c> to invoke.</param>
+    /// <param name="instanceAddress">The <c>Il2CppObject*</c> instance, or zero for a static method.</param>
+    /// <param name="timeout">The maximum duration allowed for the complete attach/invoke/detach sequence.</param>
+    /// <returns>The managed return object, exception output, and opaque pointer-sized strong return-object GC handle captured from one completed invocation.</returns>
+    public RemoteCallIl2CppInvokeResult InvokeIl2CppRuntimeInvoke(nint threadAttachAddress, nint threadDetachAddress, nint runtimeInvokeAddress, nint gcHandleNewAddress, nint domainAddress, nint methodAddress, nint instanceAddress, TimeSpan timeout)
+    {
+        if (threadAttachAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(threadAttachAddress), "The IL2CPP thread-attach function address cannot be zero.");
+
+        if (threadDetachAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(threadDetachAddress), "The IL2CPP thread-detach function address cannot be zero.");
+
+        if (runtimeInvokeAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(runtimeInvokeAddress), "The IL2CPP runtime-invoke function address cannot be zero.");
+
+        if (gcHandleNewAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(gcHandleNewAddress), "The IL2CPP GC-handle creation function address cannot be zero.");
+
+        if (domainAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(domainAddress), "The IL2CPP domain address cannot be zero.");
+
+        if (methodAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(methodAddress), "The IL2CPP method address cannot be zero.");
+
+        uint timeoutMilliseconds = ConvertTimeout(timeout);
+        ProcessAccessRights accessRights = ProcessAccessRights.CreateThread |
+                                           ProcessAccessRights.QueryInformation |
+                                           ProcessAccessRights.VirtualMemoryOperation |
+                                           ProcessAccessRights.VirtualMemoryWrite |
+                                           ProcessAccessRights.VirtualMemoryRead;
+
+        using SafeProcessHandle executionHandle = _target.OpenAdditionalHandle(accessRights);
+        using RemoteAllocation resultAllocation = RemoteAllocation.Allocate(executionHandle, Il2CppRuntimeInvokeResultSize, MemoryProtection.ReadWrite);
+        using RemoteAllocation codeAllocation = RemoteAllocation.Allocate(executionHandle, Il2CppRuntimeInvokeTrampolineSize, MemoryProtection.ReadWrite);
+
+        resultAllocation.Write(new byte[Il2CppRuntimeInvokeResultSize]);
+        byte[] trampoline = BuildIl2CppRuntimeInvokeTrampoline(threadAttachAddress, threadDetachAddress, runtimeInvokeAddress, gcHandleNewAddress, domainAddress, methodAddress, instanceAddress, resultAllocation.Address);
+
+        codeAllocation.Write(trampoline);
+        codeAllocation.Protect(MemoryProtection.ExecuteRead);
+        ExecuteTrampoline(executionHandle, codeAllocation, resultAllocation, runtimeInvokeAddress, timeoutMilliseconds);
+        nint returnValue = _memory.ReadPointer(resultAllocation.Address);
+        nint exceptionAddress = _memory.ReadPointer(resultAllocation.Address + sizeof(long));
+        // Preserve the complete native handle: Unity 2023.1+ exposes Il2CppGCHandle as an opaque pointer-sized value, while older x64 runtimes consume only its low 32 bits.
+        nuint returnValueGcHandle = _memory.Read<nuint>(resultAllocation.Address + (sizeof(long) * 2));
+        return new RemoteCallIl2CppInvokeResult(returnValue, exceptionAddress, returnValueGcHandle);
+    }
+
+    /// <summary>
     /// Invokes a native function receiving one pointer argument and returning a 32-bit unsigned integer.
     /// </summary>
     /// <param name="functionAddress">The remote native function address to invoke.</param>
@@ -440,6 +507,52 @@ internal sealed class RemoteCall
         if (offset != PointerArgumentTrampolineSize)
             throw new InvalidOperationException($"Generated x64 trampoline size is {offset} byte(s), but {PointerArgumentTrampolineSize} byte(s) were expected.");
 
+        return code;
+    }
+
+    /// <summary>Builds the Windows x64 trampoline used for one attached parameterless IL2CPP runtime invocation with strong result rooting.</summary>
+    /// <param name="threadAttachAddress">The <c>il2cpp_thread_attach</c> address.</param>
+    /// <param name="threadDetachAddress">The <c>il2cpp_thread_detach</c> address.</param>
+    /// <param name="runtimeInvokeAddress">The <c>il2cpp_runtime_invoke</c> address.</param>
+    /// <param name="gcHandleNewAddress">The <c>il2cpp_gchandle_new</c> address.</param>
+    /// <param name="domainAddress">The active runtime domain.</param>
+    /// <param name="methodAddress">The target <c>MethodInfo*</c>.</param>
+    /// <param name="instanceAddress">The optional managed instance.</param>
+    /// <param name="resultAddress">The writable result block containing return object, exception and opaque pointer-sized strong GC handle.</param>
+    /// <returns>The complete executable trampoline bytes.</returns>
+    private static byte[] BuildIl2CppRuntimeInvokeTrampoline(nint threadAttachAddress, nint threadDetachAddress, nint runtimeInvokeAddress, nint gcHandleNewAddress, nint domainAddress, nint methodAddress, nint instanceAddress, nint resultAddress)
+    {
+        byte[] code =
+        [
+            0x48, 0x83, 0xEC, 0x38, 0xC7, 0x44, 0x24, 0x28, 0x00, 0x00, 0x00, 0x00, 0x48, 0xB8, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0xB9, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xFF, 0xD0, 0x48, 0x85, 0xC0, 0x0F, 0x84, 0x8B, 0x00, 0x00, 0x00, 0x48, 0x89, 0x44, 0x24, 0x20,
+            0x48, 0xB9, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0xBA, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x45, 0x31, 0xC0, 0x49, 0xB9, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xD0, 0x48, 0xBA, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x89, 0x02, 0x48, 0x85, 0xC0, 0x74, 0x2D, 0x48,
+            0x89, 0xC1, 0x31, 0xD2, 0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xD0,
+            0x48, 0x85, 0xC0, 0x75, 0x0A, 0xC7, 0x44, 0x24, 0x28, 0x02, 0x00, 0x00, 0x00, 0xEB, 0x0D, 0x48,
+            0xBA, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x89, 0x02, 0x48, 0x8B, 0x4C, 0x24,
+            0x20, 0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xD0, 0x8B, 0x44, 0x24,
+            0x28, 0x48, 0x83, 0xC4, 0x38, 0xC3, 0xB8, 0x01, 0x00, 0x00, 0x00, 0x48, 0x83, 0xC4, 0x38, 0xC3
+        ];
+
+        if (code.Length != Il2CppRuntimeInvokeTrampolineSize)
+            throw new InvalidOperationException($"Generated IL2CPP runtime invocation trampoline size is {code.Length} byte(s), but {Il2CppRuntimeInvokeTrampolineSize} byte(s) were expected.");
+
+        nint exceptionOutAddress = checked(resultAddress + sizeof(long));
+        nint gcHandleOutAddress = checked(resultAddress + (sizeof(long) * 2));
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(14, sizeof(long)), threadAttachAddress.ToInt64());
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(24, sizeof(long)), domainAddress.ToInt64());
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(50, sizeof(long)), methodAddress.ToInt64());
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(60, sizeof(long)), instanceAddress.ToInt64());
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(73, sizeof(long)), exceptionOutAddress.ToInt64());
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(83, sizeof(long)), runtimeInvokeAddress.ToInt64());
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(95, sizeof(long)), resultAddress.ToInt64());
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(118, sizeof(long)), gcHandleNewAddress.ToInt64());
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(145, sizeof(long)), gcHandleOutAddress.ToInt64());
+        BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(163, sizeof(long)), threadDetachAddress.ToInt64());
         return code;
     }
 

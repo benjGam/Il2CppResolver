@@ -23,6 +23,11 @@ internal sealed record Il2CppMethodInfo
     public string ReturnTypeName { get; }
 
     /// <summary>
+    /// Gets the native <c>Il2CppType*</c> address representing the method return type.
+    /// </summary>
+    public nint ReturnTypeAddress { get; }
+
+    /// <summary>
     /// Gets the ordered semantic names of the method parameter types.
     /// </summary>
     public IReadOnlyList<string> ParameterTypeNames { get; }
@@ -38,14 +43,19 @@ internal sealed record Il2CppMethodInfo
     /// <param name="methodAddress">The native <c>MethodInfo*</c> address.</param>
     /// <param name="name">The semantic method name.</param>
     /// <param name="returnTypeName">The semantic return type name.</param>
+    /// <param name="returnTypeAddress">The native <c>Il2CppType*</c> representing the return type.</param>
     /// <param name="parameterTypeNames">The ordered semantic parameter type names.</param>
-    internal Il2CppMethodInfo(nint methodAddress, string name, string returnTypeName, IReadOnlyList<string> parameterTypeNames)
+    internal Il2CppMethodInfo(nint methodAddress, string name, string returnTypeName, nint returnTypeAddress, IReadOnlyList<string> parameterTypeNames)
     {
         if (methodAddress == 0)
             throw new ArgumentOutOfRangeException(nameof(methodAddress), "The IL2CPP method address cannot be zero.");
 
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(returnTypeName);
+
+        if (returnTypeAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(returnTypeAddress), "The IL2CPP return type address cannot be zero.");
+
         ArgumentNullException.ThrowIfNull(parameterTypeNames);
 
         string[] parameters = parameterTypeNames.ToArray();
@@ -56,6 +66,7 @@ internal sealed record Il2CppMethodInfo
         MethodAddress = methodAddress;
         Name = name;
         ReturnTypeName = returnTypeName;
+        ReturnTypeAddress = returnTypeAddress;
         ParameterTypeNames = Array.AsReadOnly(parameters);
     }
 }

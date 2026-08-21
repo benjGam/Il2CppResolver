@@ -7,6 +7,7 @@ using RuntimeClassMetadata = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppClas
 using RuntimeFieldInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppFieldInfo;
 using RuntimeMethodInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppMethodInfo;
 using RuntimeMethodMetadata = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppMethodMetadata;
+using RuntimeManagedInvocationResult = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppManagedInvocationResult;
 using RuntimeTypeCode = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppTypeCode;
 using RuntimeTypeDescriptor = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppTypeDescriptor;
 using UnityIl2CppResolver.Native.Remote;
@@ -430,7 +431,7 @@ internal sealed class Il2CppRuntime
             parameterTypeNames.Add(GetTypeName(parameterResult.ReturnValue, timeout));
         }
 
-        return new RuntimeMethodInfo(methodAddress, name, returnTypeName, parameterTypeNames);
+        return new RuntimeMethodInfo(methodAddress, name, returnTypeName, returnTypeResult.ReturnValue, parameterTypeNames);
     }
 
     /// <summary>
@@ -1068,6 +1069,146 @@ internal sealed class Il2CppRuntime
     {
         if (classAddress == 0)
             throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class pointer cannot be zero.");
+    }
+
+    /// <summary>Determines whether a runtime method requires an instance object.</summary>
+    /// <param name="methodAddress">The native <c>MethodInfo*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for the runtime call.</param>
+    /// <returns><see langword="true"/> when the method is an instance method.</returns>
+    public bool IsMethodInstance(nint methodAddress, TimeSpan timeout)
+    {
+        if (methodAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(methodAddress), "The IL2CPP method pointer cannot be zero.");
+
+        if (!_exports.MethodIsInstance.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose method instance classification.");
+
+        return _remoteCall.InvokeBool(_exports.MethodIsInstance.Value, methodAddress, timeout);
+    }
+
+    /// <summary>Determines whether a runtime method is a generic method definition or generic method instance.</summary>
+    /// <param name="methodAddress">The native <c>MethodInfo*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for the runtime call.</param>
+    /// <returns><see langword="true"/> when the method is generic.</returns>
+    public bool IsMethodGeneric(nint methodAddress, TimeSpan timeout)
+    {
+        if (methodAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(methodAddress), "The IL2CPP method pointer cannot be zero.");
+
+        if (!_exports.MethodIsGeneric.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose method generic classification.");
+
+        return _remoteCall.InvokeBool(_exports.MethodIsGeneric.Value, methodAddress, timeout);
+    }
+
+    /// <summary>Gets the runtime class associated with one managed object.</summary>
+    /// <param name="objectAddress">The non-null managed <c>Il2CppObject*</c>.</param>
+    /// <param name="timeout">The maximum duration allowed for the runtime call.</param>
+    /// <returns>The non-null runtime <c>Il2CppClass*</c>.</returns>
+    public nint GetObjectClass(nint objectAddress, TimeSpan timeout)
+    {
+        if (objectAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(objectAddress), "The IL2CPP object pointer cannot be zero.");
+
+        if (!_exports.ObjectGetClass.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose object-class inspection.");
+
+        nint classAddress = _remoteCall.InvokePointer(_exports.ObjectGetClass.Value, objectAddress, timeout).ReturnValue;
+
+        if (classAddress == 0)
+            throw new InvalidDataException($"IL2CPP returned a null runtime class for object 0x{objectAddress:X}.");
+
+        return classAddress;
+    }
+
+    /// <summary>Determines whether one concrete runtime class can be assigned to a requested declaring class.</summary>
+    /// <param name="declaringClassAddress">The requested base/interface class.</param>
+    /// <param name="objectClassAddress">The concrete object class.</param>
+    /// <param name="timeout">The maximum duration allowed for the runtime call.</param>
+    /// <returns><see langword="true"/> when the concrete class is assignable to the requested declaring class.</returns>
+    public bool IsClassAssignableFrom(nint declaringClassAddress, nint objectClassAddress, TimeSpan timeout)
+    {
+        ValidateClassAddress(declaringClassAddress);
+        ValidateClassAddress(objectClassAddress);
+
+        if (!_exports.ClassIsAssignableFrom.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose class assignability inspection.");
+
+        RemoteCallResult result = _remoteCall.InvokePointer(_exports.ClassIsAssignableFrom.Value, declaringClassAddress, unchecked((nuint)objectClassAddress), timeout);
+        return unchecked((byte)result.ReturnValue.ToInt64()) != 0;
+    }
+
+    /// <summary>Resolves the concrete virtual implementation of a method for one managed object.</summary>
+    /// <param name="objectAddress">The non-null managed object instance.</param>
+    /// <param name="methodAddress">The declared <c>MethodInfo*</c>.</param>
+    /// <param name="timeout">The maximum duration allowed for the runtime call.</param>
+    /// <returns>The concrete <c>MethodInfo*</c> used for invocation.</returns>
+    public nint GetVirtualMethod(nint objectAddress, nint methodAddress, TimeSpan timeout)
+    {
+        if (objectAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(objectAddress), "The IL2CPP object pointer cannot be zero.");
+
+        if (methodAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(methodAddress), "The IL2CPP method pointer cannot be zero.");
+
+        if (!_exports.ObjectGetVirtualMethod.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose virtual-method resolution.");
+
+        nint resolvedMethod = _remoteCall.InvokePointer(_exports.ObjectGetVirtualMethod.Value, objectAddress, unchecked((nuint)methodAddress), timeout).ReturnValue;
+
+        if (resolvedMethod == 0)
+            throw new InvalidDataException($"IL2CPP returned a null virtual MethodInfo for object 0x{objectAddress:X} and method 0x{methodAddress:X}.");
+
+        return resolvedMethod;
+    }
+
+    /// <summary>Invokes one parameterless managed method with explicit IL2CPP thread attachment and managed exception capture.</summary>
+    /// <param name="domainAddress">The active runtime domain.</param>
+    /// <param name="methodAddress">The concrete parameterless <c>MethodInfo*</c>.</param>
+    /// <param name="instanceAddress">The managed instance, or zero for a static method.</param>
+    /// <param name="timeout">The maximum duration allowed for the complete attached invocation.</param>
+    /// <returns>The returned object pointer, managed exception output and strong GC handle retaining any non-null return object.</returns>
+    public RuntimeManagedInvocationResult InvokeParameterlessMethod(nint domainAddress, nint methodAddress, nint instanceAddress, TimeSpan timeout)
+    {
+        if (!_exports.ThreadAttach.HasValue || !_exports.ThreadDetach.HasValue || !_exports.RuntimeInvoke.HasValue || !_exports.GcHandleNew.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose the complete attached runtime-invocation capability.");
+
+        RemoteCallIl2CppInvokeResult result = _remoteCall.InvokeIl2CppRuntimeInvoke(_exports.ThreadAttach.Value, _exports.ThreadDetach.Value, _exports.RuntimeInvoke.Value, _exports.GcHandleNew.Value, domainAddress, methodAddress, instanceAddress, timeout);
+        return new RuntimeManagedInvocationResult(result.ReturnValue, result.ExceptionAddress, result.ReturnValueGcHandle);
+    }
+
+    /// <summary>Releases one strong IL2CPP GC handle previously created for a managed invocation result through the native GC-handle API, which does not require a managed thread attachment.</summary>
+    /// <param name="gcHandle">The non-zero opaque pointer-sized GC handle to release.</param>
+    /// <param name="timeout">The maximum duration allowed for the native cleanup call.</param>
+    public void ReleaseGcHandle(nuint gcHandle, TimeSpan timeout)
+    {
+        if (gcHandle == 0)
+            return;
+
+        if (!_exports.GcHandleFree.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose GC-handle cleanup.");
+
+        _remoteCall.InvokeVoid(_exports.GcHandleFree.Value, unchecked((nint)gcHandle), timeout);
+    }
+
+    /// <summary>Gets the raw payload pointer stored inside one boxed IL2CPP value object.</summary>
+    /// <param name="objectAddress">The non-null boxed managed value.</param>
+    /// <param name="timeout">The maximum duration allowed for the runtime call.</param>
+    /// <returns>The non-null raw value payload address.</returns>
+    public nint UnboxObject(nint objectAddress, TimeSpan timeout)
+    {
+        if (objectAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(objectAddress), "The boxed IL2CPP object pointer cannot be zero.");
+
+        if (!_exports.ObjectUnbox.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose boxed-value unboxing.");
+
+        nint valueAddress = _remoteCall.InvokePointer(_exports.ObjectUnbox.Value, objectAddress, timeout).ReturnValue;
+
+        if (valueAddress == 0)
+            throw new InvalidDataException($"IL2CPP returned a null unboxed payload pointer for object 0x{objectAddress:X}.");
+
+        return valueAddress;
     }
 
     /// <summary>

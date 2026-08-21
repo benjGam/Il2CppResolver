@@ -127,6 +127,27 @@ internal sealed class Il2CppRuntimeExports
     /// <summary>Defines the optional export used to retrieve the canonical IL2CPP type represented by a class.</summary>
     private const string ClassGetTypeExportName = "il2cpp_class_get_type";
 
+    /// <summary>Defines the optional export used to invoke one managed method through the supported IL2CPP embedding API.</summary>
+    private const string RuntimeInvokeExportName = "il2cpp_runtime_invoke";
+    /// <summary>Defines the optional export used to retrieve the raw payload address from a boxed managed value.</summary>
+    private const string ObjectUnboxExportName = "il2cpp_object_unbox";
+    /// <summary>Defines the optional export used to attach the current native thread to an IL2CPP domain.</summary>
+    private const string ThreadAttachExportName = "il2cpp_thread_attach";
+    /// <summary>Defines the optional export used to detach one previously attached native thread from IL2CPP.</summary>
+    private const string ThreadDetachExportName = "il2cpp_thread_detach";
+    /// <summary>Defines the optional export used to determine whether a method requires a managed instance.</summary>
+    private const string MethodIsInstanceExportName = "il2cpp_method_is_instance";
+    /// <summary>Defines the optional export used to retrieve the runtime class of a managed object.</summary>
+    private const string ObjectGetClassExportName = "il2cpp_object_get_class";
+    /// <summary>Defines the optional export used to resolve a virtual method against a concrete managed object.</summary>
+    private const string ObjectGetVirtualMethodExportName = "il2cpp_object_get_virtual_method";
+    /// <summary>Defines the optional export used to validate that an object class can be assigned to a declaring class.</summary>
+    private const string ClassIsAssignableFromExportName = "il2cpp_class_is_assignable_from";
+    /// <summary>Defines the optional export used to create a strong GC handle for one managed object.</summary>
+    private const string GcHandleNewExportName = "il2cpp_gchandle_new";
+    /// <summary>Defines the optional export used to release one previously created GC handle.</summary>
+    private const string GcHandleFreeExportName = "il2cpp_gchandle_free";
+
     /// <summary>Gets the native address of <c>il2cpp_domain_get</c>.</summary>
     public nint DomainGet { get; }
     /// <summary>Gets the native address of <c>il2cpp_domain_get_assemblies</c>.</summary>
@@ -242,6 +263,27 @@ internal sealed class Il2CppRuntimeExports
     /// <summary>Gets the optional native address of <c>il2cpp_class_get_type</c>.</summary>
     public nint? ClassGetType { get; }
 
+    /// <summary>Gets the optional native address of <c>il2cpp_runtime_invoke</c>.</summary>
+    public nint? RuntimeInvoke { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_object_unbox</c>.</summary>
+    public nint? ObjectUnbox { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_thread_attach</c>.</summary>
+    public nint? ThreadAttach { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_thread_detach</c>.</summary>
+    public nint? ThreadDetach { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_method_is_instance</c>.</summary>
+    public nint? MethodIsInstance { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_object_get_class</c>.</summary>
+    public nint? ObjectGetClass { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_object_get_virtual_method</c>.</summary>
+    public nint? ObjectGetVirtualMethod { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_is_assignable_from</c>.</summary>
+    public nint? ClassIsAssignableFrom { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_gchandle_new</c>.</summary>
+    public nint? GcHandleNew { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_gchandle_free</c>.</summary>
+    public nint? GcHandleFree { get; }
+
     /// <summary>Initializes the complete export snapshot from one already parsed GameAssembly image.</summary>
     /// <param name="image">The loaded GameAssembly PE image whose direct exports should be resolved.</param>
     private Il2CppRuntimeExports(PeImage image)
@@ -303,6 +345,16 @@ internal sealed class Il2CppRuntimeExports
         ArrayElementSize = ResolveOptionalExport(image, ArrayElementSizeExportName);
         ClassGetElementClass = ResolveOptionalExport(image, ClassGetElementClassExportName);
         ClassGetType = ResolveOptionalExport(image, ClassGetTypeExportName);
+        RuntimeInvoke = ResolveOptionalExport(image, RuntimeInvokeExportName);
+        ObjectUnbox = ResolveOptionalExport(image, ObjectUnboxExportName);
+        ThreadAttach = ResolveOptionalExport(image, ThreadAttachExportName);
+        ThreadDetach = ResolveOptionalExport(image, ThreadDetachExportName);
+        MethodIsInstance = ResolveOptionalExport(image, MethodIsInstanceExportName);
+        ObjectGetClass = ResolveOptionalExport(image, ObjectGetClassExportName);
+        ObjectGetVirtualMethod = ResolveOptionalExport(image, ObjectGetVirtualMethodExportName);
+        ClassIsAssignableFrom = ResolveOptionalExport(image, ClassIsAssignableFromExportName);
+        GcHandleNew = ResolveOptionalExport(image, GcHandleNewExportName);
+        GcHandleFree = ResolveOptionalExport(image, GcHandleFreeExportName);
     }
 
     /// <summary>Resolves all required exports and discovers every optional capability exposed by the target GameAssembly.</summary>
