@@ -3,9 +3,10 @@
 Semantic IL2CPP resolution and runtime navigation for live Windows x64 Unity processes.
 
 ```text
-Assembly → Type → Method   → Native Code
-                ├→ Property → Getter / Setter Methods
-                └→ Field    → Static Storage
+Assembly → Type → Method   → Native Code / Metadata
+        │       ├→ Property → Getter / Setter Methods
+        │       └→ Field    → Static Storage → Validated Value Read
+        └────────→ Base / Interfaces / Nested / Declaring / Metadata
 ```
 
 `Il2CppResolver` resolves managed identities such as assemblies, types, methods, properties, and fields against a live IL2CPP runtime. It keeps semantic resolution separate from version-sensitive native layout interpretation, and exposes session-bound navigation endpoints for exploring the resolved runtime without leaking the internal process, PE, remote-call, or cache infrastructure.
@@ -42,10 +43,13 @@ The current implementation is runtime-backed: it discovers and calls exported IL
 - [Types](#types)
   - [Targeted Type Resolution](#targeted-type-resolution)
   - [Enumerating Types](#enumerating-types)
+  - [Type Relationships](#type-relationships)
+  - [Type Metadata](#type-metadata)
 - [Methods](#methods)
   - [Exact Method Resolution](#exact-method-resolution)
   - [Enumerating Methods by Name](#enumerating-methods-by-name)
   - [Enumerating All Methods](#enumerating-all-methods)
+  - [Method Metadata](#method-metadata)
 - [Native Method Code](#native-method-code)
 - [Properties](#properties)
   - [Exact Property Resolution](#exact-property-resolution)
@@ -56,6 +60,7 @@ The current implementation is runtime-backed: it discovers and calls exported IL
   - [Targeted Field Resolution](#targeted-field-resolution)
   - [Enumerating Fields](#enumerating-fields)
   - [Field Storage Kinds](#field-storage-kinds)
+  - [Field Value Reading](#field-value-reading)
 - [Static Field Storage](#static-field-storage)
   - [Default Static-storage Selection Order](#default-static-storage-selection-order)
   - [Resolution Source](#resolution-source)
@@ -77,6 +82,8 @@ The current implementation is runtime-backed: it discovers and calls exported IL
   - [Optional type enumeration](#optional-type-enumeration)
   - [Optional property navigation](#optional-property-navigation)
   - [Optional runtime static-field storage](#optional-runtime-static-field-storage)
+  - [Optional field-value inspection](#optional-field-value-inspection)
+  - [Optional type relationships and metadata](#optional-type-relationships-and-metadata)
 - [Current Limitations](#current-limitations)
 - [Complete Example](#complete-example)
 - [Development and Validation](#development-and-validation)
@@ -97,6 +104,9 @@ The current implementation is runtime-backed: it discovers and calls exported IL
 - Resolve properties by exact name and ordered index-parameter type names.
 - Enumerate properties and reuse getter/setter methods through the runtime identity map.
 - Resolve fields and classify their runtime storage kind.
+- Read explicitly supported scalar, enum, and managed-reference field values with runtime type and storage-bound validation.
+- Navigate parent types, interfaces, nested types, and declaring types through session-bound resolved objects.
+- Inspect cached type and method metadata including attributes, tokens, generic state, value-type size/alignment, and method implementation flags.
 - Map `MethodInfo*` to validated executable native code through explicit or automatically detected layouts.
 - Resolve normal static-field storage through the public IL2CPP runtime API when available.
 - Fall back to explicit or detected `Il2CppClass` layouts for static-field storage.
@@ -128,6 +138,9 @@ Some features are capability-based rather than attachment requirements:
 - `ResolvedAssembly.GetTypes()` requires the optional image/class enumeration exports.
 - Property navigation and `ResolveProperty(...)` require the optional public IL2CPP property exports.
 - Runtime-API static-field storage requires both optional static-storage exports.
+- Safe field-value reading requires the optional IL2CPP type-classification APIs; instance reads additionally require class instance-size inspection.
+- Type relationships require the corresponding optional class relationship exports and class identity APIs when a related type is materialized.
+- Type and method metadata inspection require their optional metadata exports.
 - Assembly/type/method/field resolution can continue to work when those optional capabilities are absent.
 
 ---
@@ -185,11 +198,20 @@ ResolvedMethod? setter = property.Setter;
 
 ResolvedField managerField = inputSystemType.ResolveField("s_Manager");
 ResolvedFieldStorage managerStorage = managerField.ResolveStorage();
+nint managerObject = managerField.ReadStaticReference();
+
+ResolvedType? baseType = inputSystemType.GetBaseType();
+ResolvedTypeMetadata typeMetadata = inputSystemType.GetMetadata();
+ResolvedMethodMetadata methodMetadata = queueEvent.GetMetadata();
 
 Console.WriteLine($"MethodInfo*:      0x{queueEvent.MethodInfoAddress:X}");
 Console.WriteLine($"Native code:      0x{queueEventCode.NativeAddress:X}");
 Console.WriteLine($"FieldInfo*:       0x{managerField.FieldInfoAddress:X}");
 Console.WriteLine($"Static storage:   0x{managerStorage.StorageAddress:X}");
+Console.WriteLine($"InputManager*:    0x{managerObject:X}");
+Console.WriteLine($"Base type:        {baseType?.Query.Name}");
+Console.WriteLine($"Type token:       0x{typeMetadata.MetadataToken:X8}");
+Console.WriteLine($"Method token:     0x{methodMetadata.MetadataToken:X8}");
 ```
 
 The important distinction is:
@@ -746,6 +768,51 @@ The image type catalogue is cached for the current resolver generation.
 
 ---
 
+## Type Relationships
+
+Resolved types can navigate runtime class relationships without exposing raw IL2CPP traversal primitives:
+
+```csharp
+ResolvedType? baseType = type.GetBaseType();
+IReadOnlyList<ResolvedType> interfaces = type.GetInterfaces();
+IReadOnlyList<ResolvedType> nestedTypes = type.GetNestedTypes();
+ResolvedType? declaringType = type.GetDeclaringType();
+```
+
+Related types are materialized through the same session identity map used by targeted resolution. If a parent or interface was already resolved elsewhere in the current cache generation, relationship navigation returns the same public `ResolvedType` instance.
+
+Relationship snapshots are lazy and cached per native `Il2CppClass*`. The first call may perform remote IL2CPP traversal; subsequent calls in the same generation reuse the local snapshot.
+
+`GetDeclaringType()` returns `null` for top-level types. `GetBaseType()` returns `null` for runtime root types.
+
+## Type Metadata
+
+Type metadata is explicitly requested and cached:
+
+```csharp
+ResolvedTypeMetadata metadata = type.GetMetadata();
+
+Console.WriteLine(metadata.Attributes);
+Console.WriteLine(metadata.MetadataToken);
+Console.WriteLine(metadata.IsValueType);
+Console.WriteLine(metadata.IsEnum);
+Console.WriteLine(metadata.IsBlittable);
+Console.WriteLine(metadata.IsGeneric);
+Console.WriteLine(metadata.IsInflated);
+```
+
+For value types, IL2CPP value size and alignment are also exposed when the target provides the corresponding runtime API:
+
+```csharp
+if (metadata.IsValueType)
+{
+    Console.WriteLine(metadata.ValueSize);
+    Console.WriteLine(metadata.ValueAlignment);
+}
+```
+
+`ResolvedTypeMetadata` is a pure immutable snapshot. Reading its properties never performs additional remote work.
+
 # Methods
 
 ## Exact Method Resolution
@@ -814,6 +881,25 @@ This intentionally materializes complete descriptions for every method declared 
 Use it for exploration, not as a replacement for targeted `ResolveMethod` when the desired signature is already known.
 
 ---
+
+## Method Metadata
+
+Method metadata is also lazy and cached by native `MethodInfo*` identity:
+
+```csharp
+ResolvedMethodMetadata metadata = method.GetMetadata();
+
+Console.WriteLine(metadata.Attributes);
+Console.WriteLine(metadata.ImplementationAttributes);
+Console.WriteLine(metadata.MetadataToken);
+Console.WriteLine(metadata.IsStatic);
+Console.WriteLine(metadata.IsVirtual);
+Console.WriteLine(metadata.IsAbstract);
+Console.WriteLine(metadata.IsGeneric);
+Console.WriteLine(metadata.IsInflated);
+```
+
+The convenience properties are derived from the method flags reported by IL2CPP. Metadata inspection is independent from native code mapping: calling `GetMetadata()` does not require or select a `MethodInfo` structural layout.
 
 # Native Method Code
 
@@ -1020,6 +1106,88 @@ The field represents metadata literal data rather than ordinary mutable runtime 
 The current concrete field-storage resolver intentionally supports only normal `Static` fields.
 
 ---
+
+## Field Value Reading
+
+`ResolvedField` can read a deliberately conservative set of values directly from validated runtime storage.
+
+### Static managed references
+
+```csharp
+ResolvedField managerField = inputSystemType.ResolveField("s_Manager");
+nint managerObject = managerField.ReadStaticReference();
+```
+
+A managed reference read returns the remote `Il2CppObject*` address. It does not materialize a local managed object.
+
+### Static scalar values
+
+```csharp
+int count = someStaticIntField.ReadStatic<int>();
+bool enabled = someStaticBoolField.ReadStatic<bool>();
+```
+
+A one-shot class-layout override is available when static storage must be interpreted through a specific structural profile:
+
+```csharp
+int count = someStaticIntField.ReadStatic<int>(Il2CppClassLayouts.Class29_2X64);
+```
+
+### Instance scalar and reference values
+
+When the caller already owns a remote `Il2CppObject*` address:
+
+```csharp
+int value = instanceIntField.Read<int>(objectAddress);
+nint reference = instanceReferenceField.ReadReference(objectAddress);
+```
+
+Instance reads are intentionally limited to fields declared by reference types. Reading fields relative to unboxed value-type storage is not part of the current contract.
+
+### Enum values
+
+Enum reads use dedicated APIs so an arbitrary unmanaged type cannot be accepted only because it has a compatible size:
+
+```csharp
+MyMatchingEnum value = enumField.ReadEnum<MyMatchingEnum>(objectAddress);
+MyMatchingEnum staticValue = staticEnumField.ReadStaticEnum<MyMatchingEnum>();
+```
+
+The managed enum name and underlying scalar type must match the runtime IL2CPP enum.
+
+### Supported scalar types
+
+The conservative scalar surface currently supports:
+
+```text
+bool, char
+sbyte, byte
+short, ushort
+int, uint
+long, ulong
+float, double
+nint, nuint
+```
+
+Arbitrary unmanaged structs are rejected. The reader validates:
+
+```text
+field storage kind
++ runtime Il2CppType category
++ exact managed scalar type
++ static/instance storage bounds
++ complete remote memory readability
+```
+
+For static values, the complete range must satisfy:
+
+```text
+StaticStorageOffset + sizeof(value) <= StaticFieldsSize
+```
+
+For instance values, the field range is validated against the IL2CPP-reported class instance size before memory is read.
+
+`ThreadStatic` and `Literal` fields are intentionally rejected by the value reader.
 
 # Static Field Storage
 
@@ -1409,6 +1577,29 @@ public static-field runtime API available?
       └── no → previously detected class layout fallback
 ```
 
+Field values are interpreted only after storage and runtime type validation:
+
+```text
+ResolvedField
+      ↓
+concrete static storage / instance base + offset
+      ↓
+Il2CppTypeCatalog
+      ↓
+FieldValueTypeValidator
+      ↓
+range + readability validation
+      ↓
+ProcessMemory.Read<T>()
+```
+
+Type relationships and metadata are lazy catalogue operations:
+
+```text
+ResolvedType ──→ Il2CppTypeCatalog ──→ parent / interfaces / nested / declaring / metadata
+ResolvedMethod ─→ Il2CppMethodMetadataCatalog ─→ method metadata
+```
+
 ---
 
 # Project Structure
@@ -1433,6 +1624,7 @@ Il2Cpp/
 │   └── Catalog/             session-scoped runtime snapshots and indexes
 ├── Detection/               internal layout detectors
 ├── Mapping/                 internal method-code and field-storage mappers
+├── Values/                  internal field-type validation and safe value reading
 └── Resolution/              semantic backend, cache and session orchestration
 ```
 
@@ -1558,7 +1750,34 @@ When these two exports are unavailable, explicit or previously detected class-la
 
 ---
 
+## Optional field-value inspection
+
+Field value reading is capability-based. Scalar and managed-reference interpretation requires runtime type classification APIs such as the IL2CPP type code, class mapping, and value-type/enum classification. Enum reads additionally require enum underlying-type inspection.
+
+Instance field reads also require the runtime class instance-size API so the complete field range can be validated before `ReadProcessMemory` is called.
+
+If the required exports are unavailable, the affected read endpoint throws `NotSupportedException`; normal semantic field resolution remains available.
+
+## Optional type relationships and metadata
+
+Parent, interface, nested-type, and declaring-type endpoints depend only on the specific relationship export they use. Materializing a related type additionally requires IL2CPP class image/name/namespace APIs.
+
+`ResolvedType.GetMetadata()` and `ResolvedMethod.GetMetadata()` are likewise optional capabilities. Missing metadata exports do not make `Attach()` fail and do not affect targeted semantic resolution.
+
 # Current Limitations
+
+The current implementation deliberately does **not** provide:
+
+- Arbitrary unmanaged-struct field reads.
+- Managed string decoding through the field reader.
+- Array materialization.
+- Unboxed value-type instance field addressing.
+- `ThreadStatic` value resolution.
+- Literal constant retrieval.
+- Field writes.
+- Property getter/setter invocation.
+- General managed method invocation.
+
 
 The current implementation intentionally does not attempt to solve every IL2CPP runtime problem.
 
@@ -1566,7 +1785,6 @@ Known boundaries include:
 
 - Windows x64 only.
 - Thread-static field storage is not resolved by the normal static-field storage API.
-- No generic public API for reading field values yet.
 - No general managed method invocation API.
 - Property getters/setters are resolved as methods, but property values are not invoked automatically.
 - A resolved native method address does not guarantee ABI-safe invocation.
@@ -1580,7 +1798,7 @@ Known boundaries include:
 
 # Complete Example
 
-The following example demonstrates configuration, navigation, exact overload resolution, native method-code mapping, field resolution, static-field storage, enumeration, and cache invalidation.
+The following example demonstrates configuration, navigation, exact overload resolution, metadata inspection, type relationships, native method-code mapping, field resolution, safe field-value reading, static-field storage, enumeration, and cache invalidation.
 
 ```csharp
 using UnityIl2CppResolver.Il2Cpp;
@@ -1671,6 +1889,21 @@ Console.WriteLine($"Offset:      0x{managerStorage.StaticStorageOffset:X}");
 Console.WriteLine($"Address:     0x{managerStorage.StorageAddress:X}");
 Console.WriteLine($"Source:      {managerStorage.ResolutionSource}");
 
+// Read the normal static managed reference after runtime type and storage validation.
+nint managerObject = manager.ReadStaticReference();
+Console.WriteLine($"InputManager*: 0x{managerObject:X}");
+
+// Navigate class relationships and inspect cached metadata explicitly.
+ResolvedType? baseType = inputSystem.GetBaseType();
+IReadOnlyList<ResolvedType> interfaces = inputSystem.GetInterfaces();
+ResolvedTypeMetadata inputSystemMetadata = inputSystem.GetMetadata();
+ResolvedMethodMetadata queueEventMetadata = queueEvent.GetMetadata();
+
+Console.WriteLine($"Base type:    {baseType?.Query.Name}");
+Console.WriteLine($"Interfaces:   {interfaces.Count}");
+Console.WriteLine($"Type token:   0x{inputSystemMetadata.MetadataToken:X8}");
+Console.WriteLine($"Method token: 0x{queueEventMetadata.MetadataToken:X8}");
+
 // Explicitly invalidate runtime snapshots when required.
 resolver.ClearCache();
 
@@ -1714,11 +1947,10 @@ Integration tests should continue to distinguish functional assertions from timi
 
 Potential future work includes:
 
-- public field-value reading APIs;
-- additional runtime-backed capabilities that reduce structural layout dependency;
-- additional compatibility profiles;
-- more navigation endpoints;
-- improved generic and nested semantic identity modeling;
-- additional automated tests for negative layout and capability scenarios.
-
-The current architecture intentionally keeps those features separate from the semantic resolver core so they can be added without coupling query identity to version-sensitive native runtime structures.
+- Managed string and array inspection.
+- Safe blittable-struct reading with explicit runtime size/layout validation.
+- Thread-static storage resolution.
+- Literal constant retrieval.
+- Richer generic and nested semantic identities.
+- Additional navigation and metadata endpoints.
+- A separate, explicitly designed managed invocation layer only after thread attachment, GC, exception, ABI, and marshalling requirements are modeled safely.
