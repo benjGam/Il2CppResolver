@@ -45,6 +45,16 @@ internal sealed class Il2CppRuntimeCatalog
         _methodMetadata = new Il2CppMethodMetadataCatalog(runtime, callTimeout);
     }
 
+    /// <summary>Gets the active IL2CPP domain pointer for the current cache generation, resolving it only once.</summary>
+    /// <returns>The non-null active <c>Il2CppDomain*</c> address.</returns>
+    public nint GetDomainAddress()
+    {
+        if (_domainAddress is null)
+            _domainAddress = _runtime.GetDomain(_callTimeout);
+
+        return _domainAddress.Value;
+    }
+
     /// <summary>Gets the immutable assembly snapshot for the current cache generation, materializing it only on the first request.</summary>
     /// <returns>Every assembly currently registered in the active IL2CPP domain.</returns>
     public IReadOnlyList<RuntimeAssemblyInfo> GetAssemblies()
@@ -152,10 +162,8 @@ internal sealed class Il2CppRuntimeCatalog
         if (_assemblies is not null && _assemblySnapshot is not null && _assembliesByImageAddress is not null)
             return;
 
-        if (_domainAddress is null)
-            _domainAddress = _runtime.GetDomain(_callTimeout);
-
-        IReadOnlyList<RuntimeAssemblyInfo> assemblies = _runtime.GetAssemblyInfos(_domainAddress.Value, _callTimeout);
+        nint domainAddress = GetDomainAddress();
+        IReadOnlyList<RuntimeAssemblyInfo> assemblies = _runtime.GetAssemblyInfos(domainAddress, _callTimeout);
         Dictionary<string, RuntimeAssemblyInfo> semanticIndex = new(StringComparer.OrdinalIgnoreCase);
         Dictionary<nint, RuntimeAssemblyInfo> imageIndex = new();
 

@@ -335,6 +335,90 @@ internal sealed class ResolutionBinding : IResolutionNavigator
     /// <returns>The validated raw blittable element.</returns>
     public T ReadArrayElementBlittable<T>(ResolvedArray array, int index, long generation) where T : unmanaged => GetNavigator().ReadArrayElementBlittable<T>(array, index, generation);
 
+    /// <summary>Forwards one instance scalar property getter invocation to the owning session.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated scalar getter result.</returns>
+    public T ReadProperty<T>(ResolvedProperty property, nint instanceAddress, long generation) where T : unmanaged => GetNavigator().ReadProperty<T>(property, instanceAddress, generation);
+
+    /// <summary>Forwards one static scalar property getter invocation to the owning session.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated scalar getter result.</returns>
+    public T ReadStaticProperty<T>(ResolvedProperty property, long generation) where T : unmanaged => GetNavigator().ReadStaticProperty<T>(property, generation);
+
+    /// <summary>Forwards one instance enum property getter invocation to the owning session.</summary>
+    /// <typeparam name="TEnum">The exact managed enum return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated enum getter result.</returns>
+    public TEnum ReadPropertyEnum<TEnum>(ResolvedProperty property, nint instanceAddress, long generation) where TEnum : unmanaged, Enum => GetNavigator().ReadPropertyEnum<TEnum>(property, instanceAddress, generation);
+
+    /// <summary>Forwards one static enum property getter invocation to the owning session.</summary>
+    /// <typeparam name="TEnum">The exact managed enum return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated enum getter result.</returns>
+    public TEnum ReadStaticPropertyEnum<TEnum>(ResolvedProperty property, long generation) where TEnum : unmanaged, Enum => GetNavigator().ReadStaticPropertyEnum<TEnum>(property, generation);
+
+    /// <summary>Forwards one instance managed-reference property getter invocation to the owning session.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The returned managed object pointer, or zero.</returns>
+    public nint ReadPropertyReference(ResolvedProperty property, nint instanceAddress, long generation) => GetNavigator().ReadPropertyReference(property, instanceAddress, generation);
+
+    /// <summary>Forwards one static managed-reference property getter invocation to the owning session.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The returned managed object pointer, or zero.</returns>
+    public nint ReadStaticPropertyReference(ResolvedProperty property, long generation) => GetNavigator().ReadStaticPropertyReference(property, generation);
+
+    /// <summary>Forwards one instance string property getter invocation to the owning session.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    public string? ReadPropertyString(ResolvedProperty property, nint instanceAddress, long generation) => GetNavigator().ReadPropertyString(property, instanceAddress, generation);
+
+    /// <summary>Forwards one static string property getter invocation to the owning session.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    public string? ReadStaticPropertyString(ResolvedProperty property, long generation) => GetNavigator().ReadStaticPropertyString(property, generation);
+
+    /// <summary>Forwards one instance array property getter invocation to the owning session.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/>.</returns>
+    public ResolvedArray? ReadPropertyArray(ResolvedProperty property, nint instanceAddress, long generation) => GetNavigator().ReadPropertyArray(property, instanceAddress, generation);
+
+    /// <summary>Forwards one static array property getter invocation to the owning session.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/>.</returns>
+    public ResolvedArray? ReadStaticPropertyArray(ResolvedProperty property, long generation) => GetNavigator().ReadStaticPropertyArray(property, generation);
+
+    /// <summary>Forwards one instance blittable property getter invocation to the owning session.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated raw blittable getter result.</returns>
+    public T ReadPropertyBlittable<T>(ResolvedProperty property, nint instanceAddress, long generation) where T : unmanaged => GetNavigator().ReadPropertyBlittable<T>(property, instanceAddress, generation);
+
+    /// <summary>Forwards one static blittable property getter invocation to the owning session.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated raw blittable getter result.</returns>
+    public T ReadStaticPropertyBlittable<T>(ResolvedProperty property, long generation) where T : unmanaged => GetNavigator().ReadStaticPropertyBlittable<T>(property, generation);
+
     /// <summary>Gets the attached navigator or rejects navigation before session construction has completed.</summary>
     /// <returns>The fully initialized session navigator.</returns>
     /// <exception cref="InvalidOperationException">Thrown when no navigator has been attached yet.</exception>

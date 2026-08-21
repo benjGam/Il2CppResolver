@@ -377,7 +377,7 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
             return existing;
         }
 
-        ResolvedMethod result = new(query, declaringType, method.MethodAddress, method.ReturnTypeName, method.ParameterTypeNames, _binding, _binding.Generation);
+        ResolvedMethod result = new(query, declaringType, method.MethodAddress, method.ReturnTypeName, method.ReturnTypeAddress, method.ParameterTypeNames, _binding, _binding.Generation);
         _cache.StoreMethod(result);
         return result;
     }
@@ -411,7 +411,7 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
             setter = GetOrCreateMethod(CreateMethodQuery(declaringType, setterInfo), declaringType, setterInfo);
         }
 
-        ResolvedProperty result = new(query, declaringType, property.PropertyAddress, property.TypeName, property.IndexParameterTypeNames, property.Attributes, getter, setter);
+        ResolvedProperty result = new(query, declaringType, property.PropertyAddress, property.TypeName, property.IndexParameterTypeNames, property.Attributes, getter, setter, _binding, _binding.Generation);
         _cache.StoreProperty(result);
         return result;
     }

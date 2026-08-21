@@ -1,6 +1,7 @@
 using UnityIl2CppResolver.Il2Cpp.Detection;
 using UnityIl2CppResolver.Il2Cpp.Discovery;
 using UnityIl2CppResolver.Il2Cpp.Layouts;
+using UnityIl2CppResolver.Il2Cpp.Invocation;
 using UnityIl2CppResolver.Il2Cpp.Mapping;
 using UnityIl2CppResolver.Il2Cpp.Navigation;
 using UnityIl2CppResolver.Il2Cpp.Queries;
@@ -53,6 +54,8 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
     private readonly Il2CppFieldValueReader _fieldValueReader;
     /// <summary>Materializes and reads validated single-dimensional zero-based managed arrays.</summary>
     private readonly Il2CppArrayReader _arrayReader;
+    /// <summary>Invokes validated parameterless property getters and converts their managed results through existing value readers.</summary>
+    private readonly Il2CppGetterInvoker _getterInvoker;
     /// <summary>Defines the maximum duration allowed for each individual remote IL2CPP runtime invocation.</summary>
     private readonly TimeSpan _callTimeout;
 
@@ -123,6 +126,7 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
         _stringReader = new Il2CppStringReader(target.Memory, runtime, callTimeout);
         _fieldValueReader = new Il2CppFieldValueReader(target.Memory, runtimeCatalog.GetTypeCatalog(), _stringReader);
         _arrayReader = new Il2CppArrayReader(target.Memory, runtime, runtimeCatalog.GetTypeCatalog(), _stringReader, callTimeout);
+        _getterInvoker = new Il2CppGetterInvoker(target.Memory, runtime, runtimeCatalog, _stringReader, _arrayReader, callTimeout);
         _callTimeout = callTimeout;
     }
 
@@ -406,6 +410,7 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
         lock (_syncRoot)
         {
             ThrowIfDisposed();
+            _getterInvoker.ClearRetainedResults();
             _cache.Clear();
             _runtimeCatalog.Clear();
             _detectedMethodInfoLayout = null;
@@ -1044,6 +1049,210 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
         }
     }
 
+    /// <summary>Invokes an instance property getter and reads one supported scalar result after validating the originating generation.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated scalar getter result.</returns>
+    T IResolutionNavigator.ReadProperty<T>(ResolvedProperty property, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.Read<T>(property, instanceAddress, false);
+        }
+    }
+
+    /// <summary>Invokes a static property getter and reads one supported scalar result after validating the originating generation.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated scalar getter result.</returns>
+    T IResolutionNavigator.ReadStaticProperty<T>(ResolvedProperty property, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.Read<T>(property, 0, true);
+        }
+    }
+
+    /// <summary>Invokes an instance property getter and reads one exact enum result after validating the originating generation.</summary>
+    /// <typeparam name="TEnum">The exact managed enum return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated enum getter result.</returns>
+    TEnum IResolutionNavigator.ReadPropertyEnum<TEnum>(ResolvedProperty property, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.ReadEnum<TEnum>(property, instanceAddress, false);
+        }
+    }
+
+    /// <summary>Invokes a static property getter and reads one exact enum result after validating the originating generation.</summary>
+    /// <typeparam name="TEnum">The exact managed enum return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated enum getter result.</returns>
+    TEnum IResolutionNavigator.ReadStaticPropertyEnum<TEnum>(ResolvedProperty property, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.ReadEnum<TEnum>(property, 0, true);
+        }
+    }
+
+    /// <summary>Invokes an instance property getter and returns its managed reference result after validating the originating generation.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The rooted remote managed object address, or zero.</returns>
+    nint IResolutionNavigator.ReadPropertyReference(ResolvedProperty property, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.ReadReference(property, instanceAddress, false);
+        }
+    }
+
+    /// <summary>Invokes a static property getter and returns its managed reference result after validating the originating generation.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The rooted remote managed object address, or zero.</returns>
+    nint IResolutionNavigator.ReadStaticPropertyReference(ResolvedProperty property, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.ReadReference(property, 0, true);
+        }
+    }
+
+    /// <summary>Invokes an instance property getter and decodes its managed string result after validating the originating generation.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    string? IResolutionNavigator.ReadPropertyString(ResolvedProperty property, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.ReadString(property, instanceAddress, false);
+        }
+    }
+
+    /// <summary>Invokes a static property getter and decodes its managed string result after validating the originating generation.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    string? IResolutionNavigator.ReadStaticPropertyString(ResolvedProperty property, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.ReadString(property, 0, true);
+        }
+    }
+
+    /// <summary>Invokes an instance property getter and materializes its vector-array result after validating the originating generation.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The rooted session-bound array, or <see langword="null"/>.</returns>
+    ResolvedArray? IResolutionNavigator.ReadPropertyArray(ResolvedProperty property, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.ReadArray(property, instanceAddress, false, _binding, generation);
+        }
+    }
+
+    /// <summary>Invokes a static property getter and materializes its vector-array result after validating the originating generation.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The rooted session-bound array, or <see langword="null"/>.</returns>
+    ResolvedArray? IResolutionNavigator.ReadStaticPropertyArray(ResolvedProperty property, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.ReadArray(property, 0, true, _binding, generation);
+        }
+    }
+
+    /// <summary>Invokes an instance property getter and reads one explicitly validated blittable result after validating the originating generation.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote managed instance supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated raw blittable getter result.</returns>
+    T IResolutionNavigator.ReadPropertyBlittable<T>(ResolvedProperty property, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.ReadBlittable<T>(property, instanceAddress, false);
+        }
+    }
+
+    /// <summary>Invokes a static property getter and reads one explicitly validated blittable result after validating the originating generation.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced the property.</param>
+    /// <returns>The validated raw blittable getter result.</returns>
+    T IResolutionNavigator.ReadStaticPropertyBlittable<T>(ResolvedProperty property, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(property);
+            EnsureGetterInvocationCapability();
+            return _getterInvoker.ReadBlittable<T>(property, 0, true);
+        }
+    }
+
     /// <summary>Releases the complete target-specific session and its owned native process handle.</summary>
     public void Dispose()
     {
@@ -1052,6 +1261,7 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
             if (_disposed)
                 return;
 
+            _getterInvoker.ClearRetainedResults();
             _cache.Clear();
             _runtimeCatalog.Clear();
             _process.Dispose();
@@ -1183,6 +1393,13 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
     {
         if (generation != _binding.Generation)
             throw new InvalidOperationException("The resolved entity belongs to an invalidated resolver generation. Resolve the entity again before navigating from it.");
+    }
+
+    /// <summary>Ensures the target exposes the complete conservative property-getter invocation capability before managed execution is attempted.</summary>
+    private void EnsureGetterInvocationCapability()
+    {
+        if (!_runtime.Capabilities.CanInvokePropertyGetters)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose the complete property-getter invocation capability required for thread attachment, runtime invocation, object validation, virtual dispatch and boxed-value unboxing.");
     }
 
     /// <summary>Throws when an operation is attempted after the session has released its target process.</summary>

@@ -306,4 +306,87 @@ internal interface IResolutionNavigator
     /// <param name="generation">The cache generation that produced <paramref name="array"/>.</param>
     /// <returns>The raw blittable element reconstructed from target memory.</returns>
     T ReadArrayElementBlittable<T>(ResolvedArray array, int index, long generation) where T : unmanaged;
+    /// <summary>Invokes an instance property getter and reads one explicitly supported scalar result.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The validated scalar getter result.</returns>
+    T ReadProperty<T>(ResolvedProperty property, nint instanceAddress, long generation) where T : unmanaged;
+
+    /// <summary>Invokes a static property getter and reads one explicitly supported scalar result.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The validated scalar getter result.</returns>
+    T ReadStaticProperty<T>(ResolvedProperty property, long generation) where T : unmanaged;
+
+    /// <summary>Invokes an instance property getter and reads one exact enum result.</summary>
+    /// <typeparam name="TEnum">The exact managed enum return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The validated enum getter result.</returns>
+    TEnum ReadPropertyEnum<TEnum>(ResolvedProperty property, nint instanceAddress, long generation) where TEnum : unmanaged, Enum;
+
+    /// <summary>Invokes a static property getter and reads one exact enum result.</summary>
+    /// <typeparam name="TEnum">The exact managed enum return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The validated enum getter result.</returns>
+    TEnum ReadStaticPropertyEnum<TEnum>(ResolvedProperty property, long generation) where TEnum : unmanaged, Enum;
+
+    /// <summary>Invokes an instance property getter and returns its managed-reference result.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The returned <c>Il2CppObject*</c>, or zero for a null reference.</returns>
+    nint ReadPropertyReference(ResolvedProperty property, nint instanceAddress, long generation);
+
+    /// <summary>Invokes a static property getter and returns its managed-reference result.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The returned <c>Il2CppObject*</c>, or zero for a null reference.</returns>
+    nint ReadStaticPropertyReference(ResolvedProperty property, long generation);
+
+    /// <summary>Invokes an instance property getter and decodes its managed-string result.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    string? ReadPropertyString(ResolvedProperty property, nint instanceAddress, long generation);
+
+    /// <summary>Invokes a static property getter and decodes its managed-string result.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    string? ReadStaticPropertyString(ResolvedProperty property, long generation);
+
+    /// <summary>Invokes an instance property getter and materializes its single-dimensional zero-based array result.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/>.</returns>
+    ResolvedArray? ReadPropertyArray(ResolvedProperty property, nint instanceAddress, long generation);
+
+    /// <summary>Invokes a static property getter and materializes its single-dimensional zero-based array result.</summary>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/>.</returns>
+    ResolvedArray? ReadStaticPropertyArray(ResolvedProperty property, long generation);
+
+    /// <summary>Invokes an instance property getter and reads one explicitly validated blittable value-type result.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> supplied to the getter.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The raw blittable getter result reconstructed from the boxed payload.</returns>
+    T ReadPropertyBlittable<T>(ResolvedProperty property, nint instanceAddress, long generation) where T : unmanaged;
+
+    /// <summary>Invokes a static property getter and reads one explicitly validated blittable value-type result.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP return type.</typeparam>
+    /// <param name="property">The session-bound readable property.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="property"/>.</param>
+    /// <returns>The raw blittable getter result reconstructed from the boxed payload.</returns>
+    T ReadStaticPropertyBlittable<T>(ResolvedProperty property, long generation) where T : unmanaged;
 }

@@ -14,6 +14,8 @@ public sealed class ResolvedMethod
     private readonly IResolutionNavigator _navigator;
     /// <summary>Identifies the cache generation in which this MethodInfo identity was resolved.</summary>
     private readonly long _generation;
+    /// <summary>Gets the native <c>Il2CppType*</c> representing the method return type for internal value validation.</summary>
+    internal nint RuntimeReturnTypeAddress { get; }
 
     /// <summary>Gets the semantic method identity associated with this resolved runtime entity.</summary>
     public MethodQuery Query { get; }
@@ -31,10 +33,11 @@ public sealed class ResolvedMethod
     /// <param name="declaringType">The resolved runtime declaring type.</param>
     /// <param name="methodInfoAddress">The native <c>MethodInfo*</c> address.</param>
     /// <param name="returnTypeName">The semantic return type name reported by IL2CPP.</param>
+    /// <param name="returnTypeAddress">The native <c>Il2CppType*</c> representing the return type.</param>
     /// <param name="parameterTypeNames">The verified ordered parameter type names.</param>
     /// <param name="navigator">The internal session navigator servicing native-code mapping.</param>
     /// <param name="generation">The cache generation that produced this runtime identity.</param>
-    internal ResolvedMethod(MethodQuery query, ResolvedType declaringType, nint methodInfoAddress, string returnTypeName, IReadOnlyList<string> parameterTypeNames, IResolutionNavigator navigator, long generation)
+    internal ResolvedMethod(MethodQuery query, ResolvedType declaringType, nint methodInfoAddress, string returnTypeName, nint returnTypeAddress, IReadOnlyList<string> parameterTypeNames, IResolutionNavigator navigator, long generation)
     {
         ArgumentNullException.ThrowIfNull(query);
         ArgumentNullException.ThrowIfNull(declaringType);
@@ -45,10 +48,14 @@ public sealed class ResolvedMethod
         if (methodInfoAddress == 0)
             throw new ArgumentOutOfRangeException(nameof(methodInfoAddress), "The resolved IL2CPP MethodInfo address cannot be zero.");
 
+        if (returnTypeAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(returnTypeAddress), "The resolved IL2CPP return type address cannot be zero.");
+
         Query = query;
         DeclaringType = declaringType;
         MethodInfoAddress = methodInfoAddress;
         ReturnTypeName = returnTypeName;
+        RuntimeReturnTypeAddress = returnTypeAddress;
         ParameterTypeNames = Array.AsReadOnly(parameterTypeNames.ToArray());
         _navigator = navigator;
         _generation = generation;
