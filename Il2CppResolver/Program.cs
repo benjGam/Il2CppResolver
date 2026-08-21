@@ -67,6 +67,7 @@ public static class Program
         TestTypeRelationships(resolver, assembly, type);
         TestMetadata(assembly, type, method);
         ResolvedArray? array = TestFieldValueReading(assembly, field);
+        TestPropertyValueReading(assembly, type);
         TestIdentityMap(resolver, assembly, type, method, property, field);
         TestRepeatedNavigation(assembly, type);
         TestCacheInvalidation(resolver, assembly, type, method, property, field, array);
@@ -658,6 +659,181 @@ public static class Program
         return array;
     }
 
+    /// <summary>
+    /// Validates controlled parameterless property getter invocation for static scalars, managed references and instance scalars.
+    /// The test prefers stable public Input System properties but retains dynamic scalar fallbacks for target-version tolerance.
+    /// </summary>
+    /// <param name="assembly">The resolved Unity Input System assembly.</param>
+    /// <param name="inputSystem">The resolved static InputSystem type.</param>
+    private static void TestPropertyValueReading(ResolvedAssembly assembly, ResolvedType inputSystem)
+    {
+        Section("Property value reading");
+
+        IReadOnlyList<ResolvedProperty> properties = inputSystem.GetProperties();
+        ResolvedProperty? staticScalar = properties.FirstOrDefault(property =>
+            property.CanRead &&
+            property.IndexParameterTypeNames.Count == 0 &&
+            property.Getter is not null &&
+            property.Getter.GetMetadata().IsStatic &&
+            string.Equals(property.Query.Name, "pollingFrequency", StringComparison.Ordinal) &&
+            IsSupportedScalarFieldType(property.TypeName));
+
+        staticScalar ??= properties.FirstOrDefault(property =>
+            property.CanRead &&
+            property.IndexParameterTypeNames.Count == 0 &&
+            property.Getter is not null &&
+            property.Getter.GetMetadata().IsStatic &&
+            IsSupportedScalarFieldType(property.TypeName));
+
+        Require(staticScalar is not null, "No readable static scalar property was found on InputSystem.");
+        string staticScalarValue = ReadStaticPropertyScalarAsText(staticScalar);
+        Console.WriteLine($"Static scalar:  {staticScalar.TypeName} {staticScalar.Query.Name} = {staticScalarValue}");
+        RequirePropertyScalarTypeMismatchRejected(staticScalar, 0, true);
+
+        ResolvedProperty? settingsProperty = properties.FirstOrDefault(property =>
+            property.CanRead &&
+            property.IndexParameterTypeNames.Count == 0 &&
+            property.Getter is not null &&
+            property.Getter.GetMetadata().IsStatic &&
+            string.Equals(property.Query.Name, "settings", StringComparison.Ordinal));
+
+        if (settingsProperty is not null)
+        {
+            nint settingsAddress = settingsProperty.ReadStaticReference();
+            Require(settingsAddress != 0, "InputSystem.settings returned a null managed reference.");
+            RequireThrows<InvalidOperationException>(() => settingsProperty.ReadReference(settingsAddress), "A static property getter was accepted through the instance invocation API.");
+            Console.WriteLine($"settings*:      0x{settingsAddress:X}");
+
+            ResolvedType settingsType = assembly.ResolveType("UnityEngine.InputSystem", "InputSettings");
+            IReadOnlyList<ResolvedProperty> settingsProperties = settingsType.GetProperties();
+            ResolvedProperty? instanceScalar = settingsProperties.FirstOrDefault(property =>
+                property.CanRead &&
+                property.IndexParameterTypeNames.Count == 0 &&
+                property.Getter is not null &&
+                !property.Getter.GetMetadata().IsStatic &&
+                string.Equals(property.Query.Name, "defaultButtonPressPoint", StringComparison.Ordinal) &&
+                IsSupportedScalarFieldType(property.TypeName));
+
+            instanceScalar ??= settingsProperties.FirstOrDefault(property =>
+                property.CanRead &&
+                property.IndexParameterTypeNames.Count == 0 &&
+                property.Getter is not null &&
+                !property.Getter.GetMetadata().IsStatic &&
+                IsSupportedScalarFieldType(property.TypeName));
+
+            if (instanceScalar is not null)
+            {
+                string value = ReadPropertyScalarAsText(instanceScalar, settingsAddress);
+                Console.WriteLine($"Instance scalar:{instanceScalar.TypeName} {instanceScalar.Query.Name} = {value}");
+                RequirePropertyScalarTypeMismatchRejected(instanceScalar, settingsAddress, false);
+                RequireStaticPropertyScalarRejected(instanceScalar);
+            }
+            else
+                Console.WriteLine("No supported instance scalar property was found on InputSettings; instance getter test skipped.");
+        }
+        else
+            Console.WriteLine("InputSystem.settings was not found; managed-reference and instance getter tests skipped.");
+
+        Pass();
+    }
+
+    /// <summary>Reads one supported static scalar property getter and formats its result.</summary>
+    /// <param name="property">The static scalar property.</param>
+    /// <returns>The formatted scalar result.</returns>
+    private static string ReadStaticPropertyScalarAsText(ResolvedProperty property)
+    {
+        return property.TypeName switch
+        {
+            "System.Boolean" => property.ReadStatic<bool>().ToString(),
+            "System.Char" => ((int)property.ReadStatic<char>()).ToString(),
+            "System.SByte" => property.ReadStatic<sbyte>().ToString(),
+            "System.Byte" => property.ReadStatic<byte>().ToString(),
+            "System.Int16" => property.ReadStatic<short>().ToString(),
+            "System.UInt16" => property.ReadStatic<ushort>().ToString(),
+            "System.Int32" => property.ReadStatic<int>().ToString(),
+            "System.UInt32" => property.ReadStatic<uint>().ToString(),
+            "System.Int64" => property.ReadStatic<long>().ToString(),
+            "System.UInt64" => property.ReadStatic<ulong>().ToString(),
+            "System.Single" => property.ReadStatic<float>().ToString("R"),
+            "System.Double" => property.ReadStatic<double>().ToString("R"),
+            "System.IntPtr" => $"0x{property.ReadStatic<nint>():X}",
+            "System.UIntPtr" => $"0x{property.ReadStatic<nuint>():X}",
+            _ => throw new InvalidOperationException($"Unsupported scalar property type '{property.TypeName}'.")
+        };
+    }
+
+    /// <summary>Reads one supported instance scalar property getter and formats its result.</summary>
+    /// <param name="property">The instance scalar property.</param>
+    /// <param name="instanceAddress">The remote managed instance.</param>
+    /// <returns>The formatted scalar result.</returns>
+    private static string ReadPropertyScalarAsText(ResolvedProperty property, nint instanceAddress)
+    {
+        return property.TypeName switch
+        {
+            "System.Boolean" => property.Read<bool>(instanceAddress).ToString(),
+            "System.Char" => ((int)property.Read<char>(instanceAddress)).ToString(),
+            "System.SByte" => property.Read<sbyte>(instanceAddress).ToString(),
+            "System.Byte" => property.Read<byte>(instanceAddress).ToString(),
+            "System.Int16" => property.Read<short>(instanceAddress).ToString(),
+            "System.UInt16" => property.Read<ushort>(instanceAddress).ToString(),
+            "System.Int32" => property.Read<int>(instanceAddress).ToString(),
+            "System.UInt32" => property.Read<uint>(instanceAddress).ToString(),
+            "System.Int64" => property.Read<long>(instanceAddress).ToString(),
+            "System.UInt64" => property.Read<ulong>(instanceAddress).ToString(),
+            "System.Single" => property.Read<float>(instanceAddress).ToString("R"),
+            "System.Double" => property.Read<double>(instanceAddress).ToString("R"),
+            "System.IntPtr" => $"0x{property.Read<nint>(instanceAddress):X}",
+            "System.UIntPtr" => $"0x{property.Read<nuint>(instanceAddress):X}",
+            _ => throw new InvalidOperationException($"Unsupported scalar property type '{property.TypeName}'.")
+        };
+    }
+
+    /// <summary>Verifies that a scalar property rejects a deliberately incompatible managed scalar type before result interpretation.</summary>
+    /// <param name="property">The scalar property under test.</param>
+    /// <param name="instanceAddress">The instance address for an instance getter, or zero for a static getter.</param>
+    /// <param name="isStatic">Whether the property should be invoked through the static API.</param>
+    private static void RequirePropertyScalarTypeMismatchRejected(ResolvedProperty property, nint instanceAddress, bool isStatic)
+    {
+        if (string.Equals(property.TypeName, "System.Int32", StringComparison.Ordinal))
+        {
+            if (isStatic)
+                RequireThrows<InvalidOperationException>(() => property.ReadStatic<float>(), "An Int32 property was accepted as Single.");
+            else
+                RequireThrows<InvalidOperationException>(() => property.Read<float>(instanceAddress), "An Int32 property was accepted as Single.");
+
+            return;
+        }
+
+        if (isStatic)
+            RequireThrows<InvalidOperationException>(() => property.ReadStatic<int>(), $"Property type '{property.TypeName}' was accepted as Int32.");
+        else
+            RequireThrows<InvalidOperationException>(() => property.Read<int>(instanceAddress), $"Property type '{property.TypeName}' was accepted as Int32.");
+    }
+
+    /// <summary>Verifies that an instance scalar property cannot be invoked through the static getter API using its exact managed scalar type.</summary>
+    /// <param name="property">The instance scalar property under test.</param>
+    private static void RequireStaticPropertyScalarRejected(ResolvedProperty property)
+    {
+        switch (property.TypeName)
+        {
+            case "System.Boolean": RequireThrows<InvalidOperationException>(() => property.ReadStatic<bool>(), "Instance Boolean property was accepted as static."); break;
+            case "System.Char": RequireThrows<InvalidOperationException>(() => property.ReadStatic<char>(), "Instance Char property was accepted as static."); break;
+            case "System.SByte": RequireThrows<InvalidOperationException>(() => property.ReadStatic<sbyte>(), "Instance SByte property was accepted as static."); break;
+            case "System.Byte": RequireThrows<InvalidOperationException>(() => property.ReadStatic<byte>(), "Instance Byte property was accepted as static."); break;
+            case "System.Int16": RequireThrows<InvalidOperationException>(() => property.ReadStatic<short>(), "Instance Int16 property was accepted as static."); break;
+            case "System.UInt16": RequireThrows<InvalidOperationException>(() => property.ReadStatic<ushort>(), "Instance UInt16 property was accepted as static."); break;
+            case "System.Int32": RequireThrows<InvalidOperationException>(() => property.ReadStatic<int>(), "Instance Int32 property was accepted as static."); break;
+            case "System.UInt32": RequireThrows<InvalidOperationException>(() => property.ReadStatic<uint>(), "Instance UInt32 property was accepted as static."); break;
+            case "System.Int64": RequireThrows<InvalidOperationException>(() => property.ReadStatic<long>(), "Instance Int64 property was accepted as static."); break;
+            case "System.UInt64": RequireThrows<InvalidOperationException>(() => property.ReadStatic<ulong>(), "Instance UInt64 property was accepted as static."); break;
+            case "System.Single": RequireThrows<InvalidOperationException>(() => property.ReadStatic<float>(), "Instance Single property was accepted as static."); break;
+            case "System.Double": RequireThrows<InvalidOperationException>(() => property.ReadStatic<double>(), "Instance Double property was accepted as static."); break;
+            case "System.IntPtr": RequireThrows<InvalidOperationException>(() => property.ReadStatic<nint>(), "Instance IntPtr property was accepted as static."); break;
+            case "System.UIntPtr": RequireThrows<InvalidOperationException>(() => property.ReadStatic<nuint>(), "Instance UIntPtr property was accepted as static."); break;
+            default: throw new InvalidOperationException($"Unsupported scalar property type '{property.TypeName}'.");
+        }
+    }
+
     /// <summary>Formats one nullable managed string without dumping unbounded remote content into integration-test output.</summary>
     /// <param name="value">The decoded string value.</param>
     /// <returns>A bounded diagnostic representation preserving null and empty values.</returns>
@@ -950,6 +1126,7 @@ public static class Program
         if (oldPropertyAccessor is not null)
             RequireThrows<InvalidOperationException>(() => oldPropertyAccessor.ResolveCode(), "Old property accessor remained navigable after ClearCache.");
         RequireThrows<InvalidOperationException>(() => field.ResolveStorage(), "Old ResolvedField remained navigable after ClearCache.");
+        RequireThrows<InvalidOperationException>(() => property.ReadStaticReference(), "Old ResolvedProperty getter invocation remained usable after ClearCache.");
         RequireThrows<InvalidOperationException>(() => field.ReadStaticReference(), "Old ResolvedField value reading remained usable after ClearCache.");
         RequireThrows<InvalidOperationException>(() => field.ReadStaticString(), "Old ResolvedField string reading remained usable after ClearCache.");
         RequireThrows<InvalidOperationException>(() => field.ReadStaticArray(), "Old ResolvedField array reading remained usable after ClearCache.");
@@ -966,6 +1143,7 @@ public static class Program
         Console.WriteLine("Old property accessor rejected: OK");
         Console.WriteLine("Old field rejected:    OK");
         Console.WriteLine("Old field value read rejected: OK");
+        Console.WriteLine("Old property getter rejected: OK");
         Console.WriteLine("Old string/array field reads rejected: OK");
         Console.WriteLine($"Old array rejected:    {(array is null ? "SKIPPED" : "OK")}");
 
