@@ -3,11 +3,12 @@
 Semantic IL2CPP resolution and runtime navigation for live Windows x64 Unity processes.
 
 ```text
-Assembly → Type → Method → Native Code
-                └→ Field  → Static Storage
+Assembly → Type → Method   → Native Code
+                ├→ Property → Getter / Setter Methods
+                └→ Field    → Static Storage
 ```
 
-`Il2CppResolver` resolves managed identities such as assemblies, types, methods, and fields against a live IL2CPP runtime. It keeps semantic resolution separate from version-sensitive native layout interpretation, and exposes session-bound navigation endpoints for exploring the resolved runtime without leaking the internal process, PE, remote-call, or cache infrastructure.
+`Il2CppResolver` resolves managed identities such as assemblies, types, methods, properties, and fields against a live IL2CPP runtime. It keeps semantic resolution separate from version-sensitive native layout interpretation, and exposes session-bound navigation endpoints for exploring the resolved runtime without leaking the internal process, PE, remote-call, or cache infrastructure.
 
 The current implementation is runtime-backed: it discovers and calls exported IL2CPP APIs from `GameAssembly.dll`, caches the resulting runtime metadata locally for the lifetime of the resolver session, and uses explicit compatibility layouts only where public runtime APIs are unavailable or the consumer deliberately selects a structural path.
 
@@ -46,6 +47,11 @@ The current implementation is runtime-backed: it discovers and calls exported IL
   - [Enumerating Methods by Name](#enumerating-methods-by-name)
   - [Enumerating All Methods](#enumerating-all-methods)
 - [Native Method Code](#native-method-code)
+- [Properties](#properties)
+  - [Exact Property Resolution](#exact-property-resolution)
+  - [Enumerating Properties by Name](#enumerating-properties-by-name)
+  - [Enumerating All Properties](#enumerating-all-properties)
+  - [Property Accessors](#property-accessors)
 - [Fields](#fields)
   - [Targeted Field Resolution](#targeted-field-resolution)
   - [Enumerating Fields](#enumerating-fields)
@@ -69,6 +75,7 @@ The current implementation is runtime-backed: it discovers and calls exported IL
   - [Remote timeout safety](#remote-timeout-safety)
 - [Required and Optional Runtime Capabilities](#required-and-optional-runtime-capabilities)
   - [Optional type enumeration](#optional-type-enumeration)
+  - [Optional property navigation](#optional-property-navigation)
   - [Optional runtime static-field storage](#optional-runtime-static-field-storage)
 - [Current Limitations](#current-limitations)
 - [Complete Example](#complete-example)
@@ -87,6 +94,8 @@ The current implementation is runtime-backed: it discovers and calls exported IL
 - Enumerate image types when the target exposes the optional image/class enumeration APIs.
 - Resolve exact method overloads by ordered semantic parameter-type names.
 - Enumerate all methods or only overloads sharing one method name.
+- Resolve properties by exact name and ordered index-parameter type names.
+- Enumerate properties and reuse getter/setter methods through the runtime identity map.
 - Resolve fields and classify their runtime storage kind.
 - Map `MethodInfo*` to validated executable native code through explicit or automatically detected layouts.
 - Resolve normal static-field storage through the public IL2CPP runtime API when available.
@@ -117,8 +126,9 @@ The project currently builds as an executable during development. The resolver A
 Some features are capability-based rather than attachment requirements:
 
 - `ResolvedAssembly.GetTypes()` requires the optional image/class enumeration exports.
+- Property navigation and `ResolveProperty(...)` require the optional public IL2CPP property exports.
 - Runtime-API static-field storage requires both optional static-storage exports.
-- Targeted semantic resolution can continue to work when those optional capabilities are absent.
+- Assembly/type/method/field resolution can continue to work when those optional capabilities are absent.
 
 ---
 
@@ -167,6 +177,11 @@ ResolvedMethod queueEvent = inputSystemType.ResolveMethod(
     "UnityEngine.InputSystem.LowLevel.InputEventPtr");
 
 ResolvedMethodCode queueEventCode = queueEvent.ResolveCode();
+
+IReadOnlyList<ResolvedProperty> properties = inputSystemType.GetProperties();
+ResolvedProperty property = properties[0];
+ResolvedMethod? getter = property.Getter;
+ResolvedMethod? setter = property.Setter;
 
 ResolvedField managerField = inputSystemType.ResolveField("s_Manager");
 ResolvedFieldStorage managerStorage = managerField.ResolveStorage();
@@ -253,6 +268,27 @@ FieldQuery query = new(
 
 A field query identifies a field by its exact declaring type and field name.
 
+### `PropertyQuery`
+
+```csharp
+PropertyQuery query = new(
+    "Some.Assembly",
+    "Some.Namespace",
+    "SomeType",
+    "Item",
+    "System.Int32");
+```
+
+Property identity is based on:
+
+```text
+exact property name
++
+exact ordered index-parameter type names
+```
+
+For a non-indexed property, the index-parameter sequence is empty. Property type is derived from the getter return type and/or the setter value parameter; when both accessors exist, the resolver validates that their signatures are consistent.
+
 ---
 
 ## Resolved Runtime Entities
@@ -263,6 +299,7 @@ The main resolved entities are:
 ResolvedAssembly
 ResolvedType
 ResolvedMethod
+ResolvedProperty
 ResolvedField
 ```
 
@@ -279,11 +316,18 @@ ResolvedType
     ├── GetMethods()
     ├── GetMethods(name)
     ├── ResolveMethod(...)
+    ├── GetProperties()
+    ├── GetProperties(name)
+    ├── ResolveProperty(...)
     ├── GetFields()
     └── ResolveField(...)
 
 ResolvedMethod
     └── ResolveCode(...)
+
+ResolvedProperty
+    ├── Getter → ResolvedMethod?
+    └── Setter → ResolvedMethod?
 
 ResolvedField
     └── ResolveStorage(...)
@@ -820,6 +864,87 @@ Invocation still depends on details such as:
 
 ---
 
+# Properties
+
+Property support is capability-based and does not make resolver attachment stricter. When the target exposes the public IL2CPP property APIs, properties participate in the same navigation and identity-map model as methods and fields.
+
+## Exact Property Resolution
+
+For a non-indexed property:
+
+```csharp
+ResolvedProperty property = type.ResolveProperty("settings");
+```
+
+For an indexed property:
+
+```csharp
+ResolvedProperty property = type.ResolveProperty(
+    "Item",
+    "System.Int32");
+```
+
+Equivalent resolver-level form:
+
+```csharp
+ResolvedProperty property = resolver.ResolveProperty(
+    new PropertyQuery(
+        "Some.Assembly",
+        "Some.Namespace",
+        "SomeType",
+        "Item",
+        "System.Int32"));
+```
+
+Resolution first narrows candidates by exact property name and then compares the exact ordered index-parameter type sequence.
+
+A `ResolvedProperty` exposes:
+
+```csharp
+property.Query
+property.DeclaringType
+property.PropertyInfoAddress
+property.TypeName
+property.IndexParameterTypeNames
+property.Attributes
+property.Getter
+property.Setter
+property.CanRead
+property.CanWrite
+```
+
+## Enumerating Properties by Name
+
+```csharp
+IReadOnlyList<ResolvedProperty> properties =
+    type.GetProperties("Item");
+```
+
+Only properties with the requested name have their accessor signatures materialized.
+
+## Enumerating All Properties
+
+```csharp
+IReadOnlyList<ResolvedProperty> properties = type.GetProperties();
+```
+
+This explicitly materializes every property signature declared by the class. Property enumeration is cached in the class-member catalogue for the current resolver generation.
+
+## Property Accessors
+
+Getter and setter methods reuse the existing method identity map:
+
+```csharp
+ResolvedMethod? getter = property.Getter;
+ResolvedMethod? setter = property.Setter;
+```
+
+If the same accessor is later resolved through `ResolveMethod`, the resolver returns the same `ResolvedMethod` object within the active cache generation.
+
+A property does **not** imply storage and does not expose a `ResolveStorage` endpoint. Reading a property value would require invoking its getter, which belongs to the separate managed-invocation problem and is intentionally outside the current API.
+
+---
+
 # Fields
 
 ## Targeted Field Resolution
@@ -1162,7 +1287,7 @@ ResolvedType refreshed = resolver.ResolveType(typeQuery);
 
 The refreshed result belongs to the new cache generation.
 
-This prevents a previously resolved `Il2CppClass*`, `MethodInfo*`, `FieldInfo*`, or image identity from being silently reused after the caller explicitly requested runtime cache invalidation.
+This prevents a previously resolved `Il2CppClass*`, `MethodInfo*`, `PropertyInfo*`, `FieldInfo*`, or image identity from being silently reused after the caller explicitly requested runtime cache invalidation.
 
 ---
 
@@ -1188,7 +1313,7 @@ The resolver uses standard exception types to communicate different failure clas
 | Exception | Typical meaning |
 |---|---|
 | `ArgumentException` / `ArgumentOutOfRangeException` | Invalid query, layout, offset, timeout, or configuration argument. |
-| `KeyNotFoundException` | A requested semantic assembly, type, method, or field was not found. |
+| `KeyNotFoundException` | A requested semantic assembly, type, method, property, or field was not found. |
 | `InvalidDataException` | Runtime evidence, a layout interpretation, PE state, or automatic detection result was inconsistent. |
 | `NotSupportedException` | The target lacks an optional capability or the requested storage category is intentionally unsupported. |
 | `InvalidOperationException` | The requested operation is incompatible with current resolver state, no field-storage strategy is available, a target has exited, or a resolved entity belongs to an invalidated generation. |
@@ -1208,8 +1333,8 @@ Typical first-use costs include:
 
 - building the assembly snapshot;
 - enumerating all types from an image when `GetTypes()` is explicitly requested;
-- building a method or field name index for a class;
-- materializing complete signatures for enumerated methods;
+- building a method, property, or field name index for a class;
+- materializing complete signatures for enumerated methods and properties;
 - converting IL2CPP type handles to semantic names.
 
 Repeated operations reuse local snapshots and identity maps whenever possible.
@@ -1258,6 +1383,14 @@ ResolvedMethod
 Il2CppMethodPointerResolver
       ↓
 ResolvedMethodCode
+```
+
+Properties reuse method resolution for their accessors:
+
+```text
+ResolvedProperty
+    ├── Getter → ResolvedMethod
+    └── Setter → ResolvedMethod
 ```
 
 Static-field storage uses two possible backends:
@@ -1396,6 +1529,22 @@ il2cpp_class_get_name
 il2cpp_class_get_namespace
 ```
 
+## Optional property navigation
+
+Property navigation requires the following optional public IL2CPP exports:
+
+```text
+il2cpp_class_get_properties
+il2cpp_property_get_name
+il2cpp_property_get_flags
+il2cpp_property_get_get_method
+il2cpp_property_get_set_method
+```
+
+If this capability is unavailable, assembly/type/method/field resolution remains usable while `GetProperties(...)` and `ResolveProperty(...)` throw `NotSupportedException`.
+
+---
+
 ## Optional runtime static-field storage
 
 Layout-independent runtime static storage requires:
@@ -1419,6 +1568,7 @@ Known boundaries include:
 - Thread-static field storage is not resolved by the normal static-field storage API.
 - No generic public API for reading field values yet.
 - No general managed method invocation API.
+- Property getters/setters are resolved as methods, but property values are not invoked automatically.
 - A resolved native method address does not guarantee ABI-safe invocation.
 - Automatic MethodInfo detection depends on enough method evidence from the declaring type.
 - Automatic Il2CppClass detection requires consumer-provided normal static-field evidence across multiple classes.
@@ -1487,6 +1637,23 @@ Console.WriteLine($"MethodInfo*: 0x{queueEvent.MethodInfoAddress:X}");
 Console.WriteLine($"Native:      0x{queueEventCode.NativeAddress:X}");
 Console.WriteLine($"Section:     {queueEventCode.SectionName}");
 Console.WriteLine($"Profile:     {queueEventCode.CompatibilityProfile}");
+
+// Enumerate and resolve properties.
+IReadOnlyList<ResolvedProperty> properties = inputSystem.GetProperties();
+Console.WriteLine($"Properties:  {properties.Count}");
+
+if (properties.Count > 0)
+{
+    ResolvedProperty property = properties[0];
+    ResolvedProperty resolvedProperty = inputSystem.ResolveProperty(
+        property.Query.Name,
+        property.IndexParameterTypeNames.ToArray());
+
+    Console.WriteLine($"PropertyInfo*: 0x{resolvedProperty.PropertyInfoAddress:X}");
+    Console.WriteLine($"Property type:  {resolvedProperty.TypeName}");
+    Console.WriteLine($"CanRead:        {resolvedProperty.CanRead}");
+    Console.WriteLine($"CanWrite:       {resolvedProperty.CanWrite}");
+}
 
 // Resolve one field.
 ResolvedField manager = inputSystem.ResolveField("s_Manager");
