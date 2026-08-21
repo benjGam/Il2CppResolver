@@ -5,7 +5,7 @@ namespace UnityIl2CppResolver.Il2Cpp.Runtime;
 
 /// <summary>
 /// Provides a strongly typed representation of the native IL2CPP runtime exports consumed by the resolver.
-/// Required exports must be present and directly callable, while optional exports are exposed as capabilities so higher-level resolution can prefer stable runtime APIs without rejecting older targets that lack them.
+/// Required exports must be present and directly callable, while optional exports expose capability-driven navigation, metadata and value-reading features without making process attachment unnecessarily strict.
 /// </summary>
 internal sealed class Il2CppRuntimeExports
 {
@@ -33,16 +33,6 @@ internal sealed class Il2CppRuntimeExports
     private const string TypeGetNameExportName = "il2cpp_type_get_name";
     /// <summary>Defines the export used to enumerate fields declared by a class.</summary>
     private const string ClassGetFieldsExportName = "il2cpp_class_get_fields";
-    /// <summary>Defines the optional export used to enumerate properties declared by a class.</summary>
-    private const string ClassGetPropertiesExportName = "il2cpp_class_get_properties";
-    /// <summary>Defines the optional export used to retrieve the semantic name of a property.</summary>
-    private const string PropertyGetNameExportName = "il2cpp_property_get_name";
-    /// <summary>Defines the optional export used to retrieve property metadata attributes.</summary>
-    private const string PropertyGetFlagsExportName = "il2cpp_property_get_flags";
-    /// <summary>Defines the optional export used to retrieve the getter method associated with a property.</summary>
-    private const string PropertyGetGetMethodExportName = "il2cpp_property_get_get_method";
-    /// <summary>Defines the optional export used to retrieve the setter method associated with a property.</summary>
-    private const string PropertyGetSetMethodExportName = "il2cpp_property_get_set_method";
     /// <summary>Defines the export used to retrieve the semantic name of a field.</summary>
     private const string FieldGetNameExportName = "il2cpp_field_get_name";
     /// <summary>Defines the export used to retrieve the managed type associated with a field.</summary>
@@ -53,6 +43,17 @@ internal sealed class Il2CppRuntimeExports
     private const string FieldGetOffsetExportName = "il2cpp_field_get_offset";
     /// <summary>Defines the export used to release memory allocated by IL2CPP APIs.</summary>
     private const string FreeExportName = "il2cpp_free";
+
+    /// <summary>Defines the optional export used to enumerate properties declared by a class.</summary>
+    private const string ClassGetPropertiesExportName = "il2cpp_class_get_properties";
+    /// <summary>Defines the optional export used to retrieve the semantic name of a property.</summary>
+    private const string PropertyGetNameExportName = "il2cpp_property_get_name";
+    /// <summary>Defines the optional export used to retrieve property metadata attributes.</summary>
+    private const string PropertyGetFlagsExportName = "il2cpp_property_get_flags";
+    /// <summary>Defines the optional export used to retrieve the getter method associated with a property.</summary>
+    private const string PropertyGetGetMethodExportName = "il2cpp_property_get_get_method";
+    /// <summary>Defines the optional export used to retrieve the setter method associated with a property.</summary>
+    private const string PropertyGetSetMethodExportName = "il2cpp_property_get_set_method";
     /// <summary>Defines the optional export used to retrieve the number of classes exposed by an IL2CPP image.</summary>
     private const string ImageGetClassCountExportName = "il2cpp_image_get_class_count";
     /// <summary>Defines the optional export used to retrieve one class from an IL2CPP image by zero-based index.</summary>
@@ -65,6 +66,51 @@ internal sealed class Il2CppRuntimeExports
     private const string ClassGetStaticFieldDataExportName = "il2cpp_class_get_static_field_data";
     /// <summary>Defines the optional export used to retrieve the static-data block size owned by an IL2CPP class.</summary>
     private const string ClassGetDataSizeExportName = "il2cpp_class_get_data_size";
+
+    /// <summary>Defines the optional export used to retrieve the native IL2CPP type category.</summary>
+    private const string TypeGetTypeExportName = "il2cpp_type_get_type";
+    /// <summary>Defines the modern optional export used to map an <c>Il2CppType*</c> to its runtime class.</summary>
+    private const string ClassFromTypeExportName = "il2cpp_class_from_type";
+    /// <summary>Defines the legacy-compatible optional export name used to map an <c>Il2CppType*</c> to its runtime class.</summary>
+    private const string ClassFromIl2CppTypeExportName = "il2cpp_class_from_il2cpp_type";
+    /// <summary>Defines the optional export used to retrieve the underlying type of an enum class.</summary>
+    private const string ClassEnumBaseTypeExportName = "il2cpp_class_enum_basetype";
+    /// <summary>Defines the optional export used to test whether a class is a value type.</summary>
+    private const string ClassIsValueTypeExportName = "il2cpp_class_is_valuetype";
+    /// <summary>Defines the optional export used to test whether a class is an enum.</summary>
+    private const string ClassIsEnumExportName = "il2cpp_class_is_enum";
+    /// <summary>Defines the optional export used to test whether a class is blittable.</summary>
+    private const string ClassIsBlittableExportName = "il2cpp_class_is_blittable";
+    /// <summary>Defines the optional export used to test whether a class is generic.</summary>
+    private const string ClassIsGenericExportName = "il2cpp_class_is_generic";
+    /// <summary>Defines the optional export used to test whether a class is an inflated generic instantiation.</summary>
+    private const string ClassIsInflatedExportName = "il2cpp_class_is_inflated";
+    /// <summary>Defines the optional export used to retrieve managed type attributes from a class.</summary>
+    private const string ClassGetFlagsExportName = "il2cpp_class_get_flags";
+    /// <summary>Defines the optional export used to retrieve value-type size and alignment.</summary>
+    private const string ClassValueSizeExportName = "il2cpp_class_value_size";
+    /// <summary>Defines the optional export used to retrieve the metadata token associated with a class.</summary>
+    private const string ClassGetTypeTokenExportName = "il2cpp_class_get_type_token";
+    /// <summary>Defines the optional export used to retrieve the total instance size associated with a class.</summary>
+    private const string ClassInstanceSizeExportName = "il2cpp_class_instance_size";
+    /// <summary>Defines the optional export used to retrieve the parent class.</summary>
+    private const string ClassGetParentExportName = "il2cpp_class_get_parent";
+    /// <summary>Defines the optional export used to enumerate implemented interfaces.</summary>
+    private const string ClassGetInterfacesExportName = "il2cpp_class_get_interfaces";
+    /// <summary>Defines the optional export used to enumerate nested types.</summary>
+    private const string ClassGetNestedTypesExportName = "il2cpp_class_get_nested_types";
+    /// <summary>Defines the optional export used to retrieve a nested class's declaring type.</summary>
+    private const string ClassGetDeclaringTypeExportName = "il2cpp_class_get_declaring_type";
+    /// <summary>Defines the optional export used to retrieve the image containing a class.</summary>
+    private const string ClassGetImageExportName = "il2cpp_class_get_image";
+    /// <summary>Defines the optional export used to retrieve method and implementation flags.</summary>
+    private const string MethodGetFlagsExportName = "il2cpp_method_get_flags";
+    /// <summary>Defines the optional export used to test whether a method is generic.</summary>
+    private const string MethodIsGenericExportName = "il2cpp_method_is_generic";
+    /// <summary>Defines the optional export used to test whether a method is an inflated generic instantiation.</summary>
+    private const string MethodIsInflatedExportName = "il2cpp_method_is_inflated";
+    /// <summary>Defines the optional export used to retrieve the metadata token associated with a method.</summary>
+    private const string MethodGetTokenExportName = "il2cpp_method_get_token";
 
     /// <summary>Gets the native address of <c>il2cpp_domain_get</c>.</summary>
     public nint DomainGet { get; }
@@ -90,16 +136,6 @@ internal sealed class Il2CppRuntimeExports
     public nint TypeGetName { get; }
     /// <summary>Gets the native address of <c>il2cpp_class_get_fields</c>.</summary>
     public nint ClassGetFields { get; }
-    /// <summary>Gets the optional native address of <c>il2cpp_class_get_properties</c>.</summary>
-    public nint? ClassGetProperties { get; }
-    /// <summary>Gets the optional native address of <c>il2cpp_property_get_name</c>.</summary>
-    public nint? PropertyGetName { get; }
-    /// <summary>Gets the optional native address of <c>il2cpp_property_get_flags</c>.</summary>
-    public nint? PropertyGetFlags { get; }
-    /// <summary>Gets the optional native address of <c>il2cpp_property_get_get_method</c>.</summary>
-    public nint? PropertyGetGetMethod { get; }
-    /// <summary>Gets the optional native address of <c>il2cpp_property_get_set_method</c>.</summary>
-    public nint? PropertyGetSetMethod { get; }
     /// <summary>Gets the native address of <c>il2cpp_field_get_name</c>.</summary>
     public nint FieldGetName { get; }
     /// <summary>Gets the native address of <c>il2cpp_field_get_type</c>.</summary>
@@ -110,6 +146,17 @@ internal sealed class Il2CppRuntimeExports
     public nint FieldGetOffset { get; }
     /// <summary>Gets the native address of <c>il2cpp_free</c>.</summary>
     public nint Free { get; }
+
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_properties</c>.</summary>
+    public nint? ClassGetProperties { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_property_get_name</c>.</summary>
+    public nint? PropertyGetName { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_property_get_flags</c>.</summary>
+    public nint? PropertyGetFlags { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_property_get_get_method</c>.</summary>
+    public nint? PropertyGetGetMethod { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_property_get_set_method</c>.</summary>
+    public nint? PropertyGetSetMethod { get; }
     /// <summary>Gets the optional native address of <c>il2cpp_image_get_class_count</c>.</summary>
     public nint? ImageGetClassCount { get; }
     /// <summary>Gets the optional native address of <c>il2cpp_image_get_class</c>.</summary>
@@ -122,118 +169,119 @@ internal sealed class Il2CppRuntimeExports
     public nint? ClassGetStaticFieldData { get; }
     /// <summary>Gets the optional native address of <c>il2cpp_class_get_data_size</c>.</summary>
     public nint? ClassGetDataSize { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_type_get_type</c>.</summary>
+    public nint? TypeGetType { get; }
+    /// <summary>Gets an optional native class-from-type entry point, resolved from supported public export aliases.</summary>
+    public nint? ClassFromType { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_enum_basetype</c>.</summary>
+    public nint? ClassEnumBaseType { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_is_valuetype</c>.</summary>
+    public nint? ClassIsValueType { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_is_enum</c>.</summary>
+    public nint? ClassIsEnum { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_is_blittable</c>.</summary>
+    public nint? ClassIsBlittable { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_is_generic</c>.</summary>
+    public nint? ClassIsGeneric { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_is_inflated</c>.</summary>
+    public nint? ClassIsInflated { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_flags</c>.</summary>
+    public nint? ClassGetFlags { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_value_size</c>.</summary>
+    public nint? ClassValueSize { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_type_token</c>.</summary>
+    public nint? ClassGetTypeToken { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_instance_size</c>.</summary>
+    public nint? ClassInstanceSize { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_parent</c>.</summary>
+    public nint? ClassGetParent { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_interfaces</c>.</summary>
+    public nint? ClassGetInterfaces { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_nested_types</c>.</summary>
+    public nint? ClassGetNestedTypes { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_declaring_type</c>.</summary>
+    public nint? ClassGetDeclaringType { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_image</c>.</summary>
+    public nint? ClassGetImage { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_method_get_flags</c>.</summary>
+    public nint? MethodGetFlags { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_method_is_generic</c>.</summary>
+    public nint? MethodIsGeneric { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_method_is_inflated</c>.</summary>
+    public nint? MethodIsInflated { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_method_get_token</c>.</summary>
+    public nint? MethodGetToken { get; }
 
-    /// <summary>
-    /// Initializes a validated runtime export table.
-    /// </summary>
-    /// <param name="domainGet">The native address of <c>il2cpp_domain_get</c>.</param>
-    /// <param name="domainGetAssemblies">The native address of <c>il2cpp_domain_get_assemblies</c>.</param>
-    /// <param name="assemblyGetImage">The native address of <c>il2cpp_assembly_get_image</c>.</param>
-    /// <param name="imageGetName">The native address of <c>il2cpp_image_get_name</c>.</param>
-    /// <param name="classFromName">The native address of <c>il2cpp_class_from_name</c>.</param>
-    /// <param name="classGetMethods">The native address of <c>il2cpp_class_get_methods</c>.</param>
-    /// <param name="methodGetName">The native address of <c>il2cpp_method_get_name</c>.</param>
-    /// <param name="methodGetParamCount">The native address of <c>il2cpp_method_get_param_count</c>.</param>
-    /// <param name="methodGetParam">The native address of <c>il2cpp_method_get_param</c>.</param>
-    /// <param name="methodGetReturnType">The native address of <c>il2cpp_method_get_return_type</c>.</param>
-    /// <param name="classGetFields">The native address of <c>il2cpp_class_get_fields</c>.</param>
-    /// <param name="classGetProperties">The optional native address of <c>il2cpp_class_get_properties</c>.</param>
-    /// <param name="propertyGetName">The optional native address of <c>il2cpp_property_get_name</c>.</param>
-    /// <param name="propertyGetFlags">The optional native address of <c>il2cpp_property_get_flags</c>.</param>
-    /// <param name="propertyGetGetMethod">The optional native address of <c>il2cpp_property_get_get_method</c>.</param>
-    /// <param name="propertyGetSetMethod">The optional native address of <c>il2cpp_property_get_set_method</c>.</param>
-    /// <param name="fieldGetName">The native address of <c>il2cpp_field_get_name</c>.</param>
-    /// <param name="fieldGetType">The native address of <c>il2cpp_field_get_type</c>.</param>
-    /// <param name="fieldGetFlags">The native address of <c>il2cpp_field_get_flags</c>.</param>
-    /// <param name="fieldGetOffset">The native address of <c>il2cpp_field_get_offset</c>.</param>
-    /// <param name="typeGetName">The native address of <c>il2cpp_type_get_name</c>.</param>
-    /// <param name="free">The native address of <c>il2cpp_free</c>.</param>
-    /// <param name="imageGetClassCount">The optional native address of <c>il2cpp_image_get_class_count</c>.</param>
-    /// <param name="imageGetClass">The optional native address of <c>il2cpp_image_get_class</c>.</param>
-    /// <param name="classGetName">The optional native address of <c>il2cpp_class_get_name</c>.</param>
-    /// <param name="classGetNamespace">The optional native address of <c>il2cpp_class_get_namespace</c>.</param>
-    /// <param name="classGetStaticFieldData">The optional native address of <c>il2cpp_class_get_static_field_data</c>.</param>
-    /// <param name="classGetDataSize">The optional native address of <c>il2cpp_class_get_data_size</c>.</param>
-    private Il2CppRuntimeExports(nint domainGet, nint domainGetAssemblies, nint assemblyGetImage, nint imageGetName, nint classFromName, nint classGetMethods, nint methodGetName, nint methodGetParamCount, nint methodGetParam, nint methodGetReturnType, nint classGetFields, nint? classGetProperties, nint? propertyGetName, nint? propertyGetFlags, nint? propertyGetGetMethod, nint? propertyGetSetMethod, nint fieldGetName, nint fieldGetType, nint fieldGetFlags, nint fieldGetOffset, nint typeGetName, nint free, nint? imageGetClassCount, nint? imageGetClass, nint? classGetName, nint? classGetNamespace, nint? classGetStaticFieldData, nint? classGetDataSize)
+    /// <summary>Initializes the complete export snapshot from one already parsed GameAssembly image.</summary>
+    /// <param name="image">The loaded GameAssembly PE image whose direct exports should be resolved.</param>
+    private Il2CppRuntimeExports(PeImage image)
     {
-        DomainGet = domainGet;
-        DomainGetAssemblies = domainGetAssemblies;
-        AssemblyGetImage = assemblyGetImage;
-        ImageGetName = imageGetName;
-        ClassFromName = classFromName;
-        ClassGetMethods = classGetMethods;
-        MethodGetName = methodGetName;
-        MethodGetParamCount = methodGetParamCount;
-        MethodGetParam = methodGetParam;
-        MethodGetReturnType = methodGetReturnType;
-        ClassGetFields = classGetFields;
-        ClassGetProperties = classGetProperties;
-        PropertyGetName = propertyGetName;
-        PropertyGetFlags = propertyGetFlags;
-        PropertyGetGetMethod = propertyGetGetMethod;
-        PropertyGetSetMethod = propertyGetSetMethod;
-        FieldGetName = fieldGetName;
-        FieldGetType = fieldGetType;
-        FieldGetFlags = fieldGetFlags;
-        FieldGetOffset = fieldGetOffset;
-        TypeGetName = typeGetName;
-        Free = free;
-        ImageGetClassCount = imageGetClassCount;
-        ImageGetClass = imageGetClass;
-        ClassGetName = classGetName;
-        ClassGetNamespace = classGetNamespace;
-        ClassGetStaticFieldData = classGetStaticFieldData;
-        ClassGetDataSize = classGetDataSize;
+        DomainGet = ResolveRequiredExport(image, DomainGetExportName);
+        DomainGetAssemblies = ResolveRequiredExport(image, DomainGetAssembliesExportName);
+        AssemblyGetImage = ResolveRequiredExport(image, AssemblyGetImageExportName);
+        ImageGetName = ResolveRequiredExport(image, ImageGetNameExportName);
+        ClassFromName = ResolveRequiredExport(image, ClassFromNameExportName);
+        ClassGetMethods = ResolveRequiredExport(image, ClassGetMethodsExportName);
+        MethodGetName = ResolveRequiredExport(image, MethodGetNameExportName);
+        MethodGetParamCount = ResolveRequiredExport(image, MethodGetParamCountExportName);
+        MethodGetParam = ResolveRequiredExport(image, MethodGetParamExportName);
+        MethodGetReturnType = ResolveRequiredExport(image, MethodGetReturnTypeExportName);
+        TypeGetName = ResolveRequiredExport(image, TypeGetNameExportName);
+        ClassGetFields = ResolveRequiredExport(image, ClassGetFieldsExportName);
+        FieldGetName = ResolveRequiredExport(image, FieldGetNameExportName);
+        FieldGetType = ResolveRequiredExport(image, FieldGetTypeExportName);
+        FieldGetFlags = ResolveRequiredExport(image, FieldGetFlagsExportName);
+        FieldGetOffset = ResolveRequiredExport(image, FieldGetOffsetExportName);
+        Free = ResolveRequiredExport(image, FreeExportName);
+
+        ClassGetProperties = ResolveOptionalExport(image, ClassGetPropertiesExportName);
+        PropertyGetName = ResolveOptionalExport(image, PropertyGetNameExportName);
+        PropertyGetFlags = ResolveOptionalExport(image, PropertyGetFlagsExportName);
+        PropertyGetGetMethod = ResolveOptionalExport(image, PropertyGetGetMethodExportName);
+        PropertyGetSetMethod = ResolveOptionalExport(image, PropertyGetSetMethodExportName);
+        ImageGetClassCount = ResolveOptionalExport(image, ImageGetClassCountExportName);
+        ImageGetClass = ResolveOptionalExport(image, ImageGetClassExportName);
+        ClassGetName = ResolveOptionalExport(image, ClassGetNameExportName);
+        ClassGetNamespace = ResolveOptionalExport(image, ClassGetNamespaceExportName);
+        ClassGetStaticFieldData = ResolveOptionalExport(image, ClassGetStaticFieldDataExportName);
+        ClassGetDataSize = ResolveOptionalExport(image, ClassGetDataSizeExportName);
+        TypeGetType = ResolveOptionalExport(image, TypeGetTypeExportName);
+        ClassFromType = ResolveFirstOptionalExport(image, ClassFromTypeExportName, ClassFromIl2CppTypeExportName);
+        ClassEnumBaseType = ResolveOptionalExport(image, ClassEnumBaseTypeExportName);
+        ClassIsValueType = ResolveOptionalExport(image, ClassIsValueTypeExportName);
+        ClassIsEnum = ResolveOptionalExport(image, ClassIsEnumExportName);
+        ClassIsBlittable = ResolveOptionalExport(image, ClassIsBlittableExportName);
+        ClassIsGeneric = ResolveOptionalExport(image, ClassIsGenericExportName);
+        ClassIsInflated = ResolveOptionalExport(image, ClassIsInflatedExportName);
+        ClassGetFlags = ResolveOptionalExport(image, ClassGetFlagsExportName);
+        ClassValueSize = ResolveOptionalExport(image, ClassValueSizeExportName);
+        ClassGetTypeToken = ResolveOptionalExport(image, ClassGetTypeTokenExportName);
+        ClassInstanceSize = ResolveOptionalExport(image, ClassInstanceSizeExportName);
+        ClassGetParent = ResolveOptionalExport(image, ClassGetParentExportName);
+        ClassGetInterfaces = ResolveOptionalExport(image, ClassGetInterfacesExportName);
+        ClassGetNestedTypes = ResolveOptionalExport(image, ClassGetNestedTypesExportName);
+        ClassGetDeclaringType = ResolveOptionalExport(image, ClassGetDeclaringTypeExportName);
+        ClassGetImage = ResolveOptionalExport(image, ClassGetImageExportName);
+        MethodGetFlags = ResolveOptionalExport(image, MethodGetFlagsExportName);
+        MethodIsGeneric = ResolveOptionalExport(image, MethodIsGenericExportName);
+        MethodIsInflated = ResolveOptionalExport(image, MethodIsInflatedExportName);
+        MethodGetToken = ResolveOptionalExport(image, MethodGetTokenExportName);
     }
 
-    /// <summary>
-    /// Resolves all required IL2CPP runtime entry points and discovers optional capabilities exposed by the target <c>GameAssembly.dll</c>.
-    /// </summary>
-    /// <param name="target">The validated IL2CPP target whose exports should be inspected.</param>
-    /// <returns>A strongly typed runtime export table.</returns>
-    /// <exception cref="InvalidDataException">Thrown when a required export is missing, forwarded or resolves outside the owning image.</exception>
+    /// <summary>Resolves all required exports and discovers every optional capability exposed by the target GameAssembly.</summary>
+    /// <param name="target">The validated IL2CPP target whose export table should be inspected.</param>
+    /// <returns>A strongly typed runtime export snapshot.</returns>
+    /// <exception cref="InvalidDataException">Thrown when a required export is unavailable as a direct address inside GameAssembly.</exception>
     public static Il2CppRuntimeExports Resolve(Il2CppTarget target)
     {
         ArgumentNullException.ThrowIfNull(target);
-        PeImage image = target.GameAssemblyImage;
-
-        return new Il2CppRuntimeExports(
-            ResolveRequiredExport(image, DomainGetExportName),
-            ResolveRequiredExport(image, DomainGetAssembliesExportName),
-            ResolveRequiredExport(image, AssemblyGetImageExportName),
-            ResolveRequiredExport(image, ImageGetNameExportName),
-            ResolveRequiredExport(image, ClassFromNameExportName),
-            ResolveRequiredExport(image, ClassGetMethodsExportName),
-            ResolveRequiredExport(image, MethodGetNameExportName),
-            ResolveRequiredExport(image, MethodGetParamCountExportName),
-            ResolveRequiredExport(image, MethodGetParamExportName),
-            ResolveRequiredExport(image, MethodGetReturnTypeExportName),
-            ResolveRequiredExport(image, ClassGetFieldsExportName),
-            ResolveOptionalExport(image, ClassGetPropertiesExportName),
-            ResolveOptionalExport(image, PropertyGetNameExportName),
-            ResolveOptionalExport(image, PropertyGetFlagsExportName),
-            ResolveOptionalExport(image, PropertyGetGetMethodExportName),
-            ResolveOptionalExport(image, PropertyGetSetMethodExportName),
-            ResolveRequiredExport(image, FieldGetNameExportName),
-            ResolveRequiredExport(image, FieldGetTypeExportName),
-            ResolveRequiredExport(image, FieldGetFlagsExportName),
-            ResolveRequiredExport(image, FieldGetOffsetExportName),
-            ResolveRequiredExport(image, TypeGetNameExportName),
-            ResolveRequiredExport(image, FreeExportName),
-            ResolveOptionalExport(image, ImageGetClassCountExportName),
-            ResolveOptionalExport(image, ImageGetClassExportName),
-            ResolveOptionalExport(image, ClassGetNameExportName),
-            ResolveOptionalExport(image, ClassGetNamespaceExportName),
-            ResolveOptionalExport(image, ClassGetStaticFieldDataExportName),
-            ResolveOptionalExport(image, ClassGetDataSizeExportName));
+        return new Il2CppRuntimeExports(target.GameAssemblyImage);
     }
 
-    /// <summary>
-    /// Resolves a required direct IL2CPP export and validates that its address belongs to the loaded image.
-    /// </summary>
-    /// <param name="image">The parsed <c>GameAssembly.dll</c> image.</param>
+    /// <summary>Resolves a required direct IL2CPP export and validates that its address belongs to the loaded image.</summary>
+    /// <param name="image">The parsed GameAssembly image.</param>
     /// <param name="exportName">The exact export name to resolve.</param>
-    /// <returns>The validated direct runtime address.</returns>
+    /// <returns>The validated native runtime address.</returns>
     private static nint ResolveRequiredExport(PeImage image, string exportName)
     {
         nint? address = ResolveOptionalExport(image, exportName);
@@ -244,11 +292,25 @@ internal sealed class Il2CppRuntimeExports
         return address.Value;
     }
 
-    /// <summary>
-    /// Resolves an optional direct IL2CPP export when present and valid.
-    /// Missing or forwarded optional exports are treated as unavailable capabilities rather than target-detection failures.
-    /// </summary>
-    /// <param name="image">The parsed <c>GameAssembly.dll</c> image.</param>
+    /// <summary>Resolves the first available direct export from a list of compatible public API aliases.</summary>
+    /// <param name="image">The parsed GameAssembly image.</param>
+    /// <param name="exportNames">The compatible export names in preferred order.</param>
+    /// <returns>The first validated address, or <see langword="null"/> when none is available.</returns>
+    private static nint? ResolveFirstOptionalExport(PeImage image, params string[] exportNames)
+    {
+        foreach (string exportName in exportNames)
+        {
+            nint? address = ResolveOptionalExport(image, exportName);
+
+            if (address is not null)
+                return address;
+        }
+
+        return null;
+    }
+
+    /// <summary>Resolves an optional direct IL2CPP export when present and valid.</summary>
+    /// <param name="image">The parsed GameAssembly image.</param>
     /// <param name="exportName">The exact export name to resolve.</param>
     /// <returns>The validated direct runtime address, or <see langword="null"/> when unavailable.</returns>
     private static nint? ResolveOptionalExport(PeImage image, string exportName)

@@ -819,4 +819,33 @@ internal sealed class RemoteCall
         return unchecked((int)(uint)result.ReturnValue.ToInt64());
     }
 
+    /// <summary>
+    /// Invokes a native function receiving one pointer argument and returns its C++ boolean result as interpreted from the low byte of <c>RAX</c>.
+    /// </summary>
+    /// <param name="functionAddress">The remote native function address to invoke.</param>
+    /// <param name="argument">The pointer-sized argument supplied through <c>RCX</c>.</param>
+    /// <param name="timeout">The maximum amount of time allowed for execution.</param>
+    /// <returns><see langword="true"/> when the native function returns a non-zero value; otherwise <see langword="false"/>.</returns>
+    public bool InvokeBool(nint functionAddress, nint argument, TimeSpan timeout)
+    {
+        RemoteCallResult result = InvokePointer(functionAddress, argument, timeout);
+        return unchecked((byte)result.ReturnValue.ToInt64()) != 0;
+    }
+
+    /// <summary>
+    /// Invokes a native function receiving one pointer argument followed by a pointer to 32-bit output storage.
+    /// The implementation reuses the pointer-sized output trampoline with zero-initialized storage so native 32-bit writes are recovered without introducing another ABI shape.
+    /// </summary>
+    /// <param name="functionAddress">The remote native function address to invoke.</param>
+    /// <param name="argument">The pointer-sized first argument supplied through <c>RCX</c>.</param>
+    /// <param name="timeout">The maximum amount of time allowed for execution.</param>
+    /// <returns>The 32-bit function return value, 32-bit output value and completed trampoline thread exit code.</returns>
+    public RemoteCallUInt32OutResult InvokeUInt32WithUInt32OutArgument(nint functionAddress, nint argument, TimeSpan timeout)
+    {
+        RemoteCallPointerSizeOutResult result = InvokePointerWithNuintOutArgument(functionAddress, argument, timeout);
+        uint returnValue = unchecked((uint)result.ReturnValue.ToInt64());
+        uint outValue = unchecked((uint)result.OutValue);
+        return new RemoteCallUInt32OutResult(returnValue, outValue, result.ThreadExitCode);
+    }
+
 }

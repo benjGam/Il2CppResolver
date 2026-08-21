@@ -3,8 +3,12 @@ using System.Text;
 using UnityIl2CppResolver.Il2Cpp.Discovery;
 using RuntimeAssemblyInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppAssemblyInfo;
 using RuntimeClassInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppClassInfo;
+using RuntimeClassMetadata = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppClassMetadata;
 using RuntimeFieldInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppFieldInfo;
 using RuntimeMethodInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppMethodInfo;
+using RuntimeMethodMetadata = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppMethodMetadata;
+using RuntimeTypeCode = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppTypeCode;
+using RuntimeTypeDescriptor = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppTypeDescriptor;
 using UnityIl2CppResolver.Native.Remote;
 
 namespace UnityIl2CppResolver.Il2Cpp.Runtime;
@@ -263,7 +267,7 @@ internal sealed class Il2CppRuntime
             if (string.IsNullOrWhiteSpace(name))
                 throw new InvalidDataException($"IL2CPP returned an empty class name for class 0x{classAddress:X}.");
 
-            classes.Add(new RuntimeClassInfo(classAddress, namespaceName, name));
+            classes.Add(new RuntimeClassInfo(classAddress, imageAddress, namespaceName, name));
         }
 
         return classes.AsReadOnly();
@@ -666,7 +670,277 @@ internal sealed class Il2CppRuntime
         int rawAttributes = _remoteCall.InvokeInt32(_exports.FieldGetFlags, fieldAddress, timeout);
         nuint offset = _remoteCall.InvokeNuint(_exports.FieldGetOffset, fieldAddress, timeout);
 
-        return new RuntimeFieldInfo(fieldAddress, name, typeName, (System.Reflection.FieldAttributes)rawAttributes, offset);
+        return new RuntimeFieldInfo(fieldAddress, name, typeResult.ReturnValue, typeName, (System.Reflection.FieldAttributes)rawAttributes, offset);
+    }
+
+    /// <summary>
+    /// Retrieves the runtime type descriptor required to validate field-value interpretation.
+    /// </summary>
+    /// <param name="typeAddress">The native <c>Il2CppType*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
+    /// <returns>A runtime descriptor containing type category, class identity and enum information.</returns>
+    /// <exception cref="NotSupportedException">Thrown when the target does not expose the field-type inspection capability.</exception>
+    public RuntimeTypeDescriptor GetTypeDescriptor(nint typeAddress, TimeSpan timeout)
+    {
+        if (typeAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(typeAddress), "The IL2CPP type pointer cannot be zero.");
+
+        if (!Capabilities.CanInspectFieldValueTypes || _exports.TypeGetType is null || _exports.ClassFromType is null || _exports.ClassIsValueType is null || _exports.ClassIsEnum is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose the type APIs required for safe field-value interpretation.");
+
+        RuntimeTypeCode typeCode = (RuntimeTypeCode)_remoteCall.InvokeInt32(_exports.TypeGetType.Value, typeAddress, timeout);
+        string typeName = GetTypeName(typeAddress, timeout);
+        nint classAddress = _remoteCall.InvokePointer(_exports.ClassFromType.Value, typeAddress, timeout).ReturnValue;
+        bool isValueType = false;
+        bool isEnum = false;
+        RuntimeTypeCode? enumUnderlyingTypeCode = null;
+
+        if (classAddress != 0)
+        {
+            isValueType = _remoteCall.InvokeBool(_exports.ClassIsValueType.Value, classAddress, timeout);
+            isEnum = _remoteCall.InvokeBool(_exports.ClassIsEnum.Value, classAddress, timeout);
+
+            if (isEnum)
+            {
+                if (_exports.ClassEnumBaseType is null)
+                    throw new NotSupportedException("The target IL2CPP runtime does not expose enum underlying-type inspection.");
+
+                nint enumBaseType = _remoteCall.InvokePointer(_exports.ClassEnumBaseType.Value, classAddress, timeout).ReturnValue;
+
+                if (enumBaseType == 0)
+                    throw new InvalidDataException($"IL2CPP returned a null enum base type for class 0x{classAddress:X}.");
+
+                enumUnderlyingTypeCode = (RuntimeTypeCode)_remoteCall.InvokeInt32(_exports.TypeGetType.Value, enumBaseType, timeout);
+            }
+        }
+
+        return new RuntimeTypeDescriptor(typeAddress, typeCode, typeName, classAddress, isValueType, isEnum, enumUnderlyingTypeCode);
+    }
+
+    /// <summary>
+    /// Retrieves complete public metadata for one live IL2CPP class.
+    /// </summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
+    /// <returns>The runtime class metadata snapshot.</returns>
+    /// <exception cref="NotSupportedException">Thrown when the target lacks the complete type-metadata capability.</exception>
+    public RuntimeClassMetadata GetClassMetadata(nint classAddress, TimeSpan timeout)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class pointer cannot be zero.");
+
+        if (!Capabilities.CanInspectTypeMetadata || _exports.ClassGetFlags is null || _exports.ClassGetTypeToken is null || _exports.ClassIsValueType is null || _exports.ClassIsEnum is null || _exports.ClassIsBlittable is null || _exports.ClassIsGeneric is null || _exports.ClassIsInflated is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose the class metadata inspection capability.");
+
+        System.Reflection.TypeAttributes attributes = (System.Reflection.TypeAttributes)_remoteCall.InvokeInt32(_exports.ClassGetFlags.Value, classAddress, timeout);
+        uint metadataToken = _remoteCall.InvokeUInt32(_exports.ClassGetTypeToken.Value, classAddress, timeout);
+        bool isValueType = _remoteCall.InvokeBool(_exports.ClassIsValueType.Value, classAddress, timeout);
+        bool isEnum = _remoteCall.InvokeBool(_exports.ClassIsEnum.Value, classAddress, timeout);
+        bool isBlittable = _remoteCall.InvokeBool(_exports.ClassIsBlittable.Value, classAddress, timeout);
+        bool isGeneric = _remoteCall.InvokeBool(_exports.ClassIsGeneric.Value, classAddress, timeout);
+        bool isInflated = _remoteCall.InvokeBool(_exports.ClassIsInflated.Value, classAddress, timeout);
+        int? valueSize = null;
+        uint? valueAlignment = null;
+
+        if (isValueType)
+        {
+            if (_exports.ClassValueSize is null)
+                throw new NotSupportedException("The target IL2CPP runtime does not expose value-type size and alignment inspection.");
+
+            RemoteCallUInt32OutResult sizeResult = _remoteCall.InvokeUInt32WithUInt32OutArgument(_exports.ClassValueSize.Value, classAddress, timeout);
+            int size = unchecked((int)sizeResult.ReturnValue);
+
+            if (size < 0)
+                throw new InvalidDataException($"IL2CPP returned invalid negative value size {size} for class 0x{classAddress:X}.");
+
+            valueSize = size;
+            valueAlignment = sizeResult.OutValue;
+        }
+
+        return new RuntimeClassMetadata(classAddress, attributes, metadataToken, isValueType, isEnum, isBlittable, isGeneric, isInflated, valueSize, valueAlignment);
+    }
+
+    /// <summary>
+    /// Retrieves complete public metadata for one live IL2CPP method.
+    /// </summary>
+    /// <param name="methodAddress">The native <c>MethodInfo*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
+    /// <returns>The runtime method metadata snapshot.</returns>
+    /// <exception cref="NotSupportedException">Thrown when the target lacks the complete method-metadata capability.</exception>
+    public RuntimeMethodMetadata GetMethodMetadata(nint methodAddress, TimeSpan timeout)
+    {
+        if (methodAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(methodAddress), "The IL2CPP method pointer cannot be zero.");
+
+        if (!Capabilities.CanInspectMethodMetadata || _exports.MethodGetFlags is null || _exports.MethodIsGeneric is null || _exports.MethodIsInflated is null || _exports.MethodGetToken is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose the complete method metadata inspection capability.");
+
+        RemoteCallUInt32OutResult flagsResult = _remoteCall.InvokeUInt32WithUInt32OutArgument(_exports.MethodGetFlags.Value, methodAddress, timeout);
+        System.Reflection.MethodAttributes attributes = (System.Reflection.MethodAttributes)flagsResult.ReturnValue;
+        System.Reflection.MethodImplAttributes implementationAttributes = (System.Reflection.MethodImplAttributes)flagsResult.OutValue;
+        uint metadataToken = _remoteCall.InvokeUInt32(_exports.MethodGetToken.Value, methodAddress, timeout);
+        bool isGeneric = _remoteCall.InvokeBool(_exports.MethodIsGeneric.Value, methodAddress, timeout);
+        bool isInflated = _remoteCall.InvokeBool(_exports.MethodIsInflated.Value, methodAddress, timeout);
+        return new RuntimeMethodMetadata(methodAddress, attributes, implementationAttributes, metadataToken, isGeneric, isInflated);
+    }
+
+    /// <summary>Retrieves the total native instance size reported by IL2CPP for the specified class.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The total instance size in bytes.</returns>
+    public int GetClassInstanceSize(nint classAddress, TimeSpan timeout)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class pointer cannot be zero.");
+
+        if (_exports.ClassInstanceSize is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose class instance-size inspection.");
+
+        int size = _remoteCall.InvokeInt32(_exports.ClassInstanceSize.Value, classAddress, timeout);
+
+        if (size <= 0)
+            throw new InvalidDataException($"IL2CPP returned invalid instance size {size} for class 0x{classAddress:X}.");
+
+        return size;
+    }
+
+    /// <summary>Tests whether the specified runtime class is a managed value type.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns><see langword="true"/> when the class is a value type; otherwise <see langword="false"/>.</returns>
+    public bool IsClassValueType(nint classAddress, TimeSpan timeout)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class pointer cannot be zero.");
+
+        if (_exports.ClassIsValueType is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose class value-type inspection.");
+
+        return _remoteCall.InvokeBool(_exports.ClassIsValueType.Value, classAddress, timeout);
+    }
+
+    /// <summary>Retrieves the parent class of a runtime type.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> whose parent should be retrieved.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The parent <c>Il2CppClass*</c>, or zero when the type has no parent.</returns>
+    public nint GetClassParent(nint classAddress, TimeSpan timeout)
+    {
+        ValidateClassAddress(classAddress);
+
+        if (_exports.ClassGetParent is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose parent-type navigation.");
+
+        return _remoteCall.InvokePointer(_exports.ClassGetParent.Value, classAddress, timeout).ReturnValue;
+    }
+
+    /// <summary>Retrieves the declaring type of a nested runtime class.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> whose declaring type should be retrieved.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The declaring <c>Il2CppClass*</c>, or zero for a top-level type.</returns>
+    public nint GetClassDeclaringType(nint classAddress, TimeSpan timeout)
+    {
+        ValidateClassAddress(classAddress);
+
+        if (_exports.ClassGetDeclaringType is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose declaring-type navigation.");
+
+        return _remoteCall.InvokePointer(_exports.ClassGetDeclaringType.Value, classAddress, timeout).ReturnValue;
+    }
+
+    /// <summary>Enumerates every interface reported by IL2CPP for the specified runtime class.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> whose interfaces should be enumerated.</param>
+    /// <param name="timeout">The maximum duration allowed for each iterator call.</param>
+    /// <returns>An immutable list of interface <c>Il2CppClass*</c> addresses.</returns>
+    public IReadOnlyList<nint> GetClassInterfaces(nint classAddress, TimeSpan timeout)
+    {
+        ValidateClassAddress(classAddress);
+
+        if (_exports.ClassGetInterfaces is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose interface navigation.");
+
+        return EnumerateClasses(_exports.ClassGetInterfaces.Value, classAddress, timeout, "interface");
+    }
+
+    /// <summary>Enumerates every nested class declared by the specified runtime class.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> whose nested types should be enumerated.</param>
+    /// <param name="timeout">The maximum duration allowed for each iterator call.</param>
+    /// <returns>An immutable list of nested <c>Il2CppClass*</c> addresses.</returns>
+    public IReadOnlyList<nint> GetClassNestedTypes(nint classAddress, TimeSpan timeout)
+    {
+        ValidateClassAddress(classAddress);
+
+        if (_exports.ClassGetNestedTypes is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose nested-type navigation.");
+
+        return EnumerateClasses(_exports.ClassGetNestedTypes.Value, classAddress, timeout, "nested type");
+    }
+
+    /// <summary>Retrieves semantic identity and containing image for one runtime class.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> to describe.</param>
+    /// <param name="timeout">The maximum duration allowed for each native runtime call.</param>
+    /// <returns>The runtime class description used to materialize a public resolved type.</returns>
+    public RuntimeClassInfo GetClassInfo(nint classAddress, TimeSpan timeout)
+    {
+        ValidateClassAddress(classAddress);
+
+        if (_exports.ClassGetImage is null || _exports.ClassGetName is null || _exports.ClassGetNamespace is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose the class identity APIs required to materialize related runtime types.");
+
+        nint imageAddress = _remoteCall.InvokePointer(_exports.ClassGetImage.Value, classAddress, timeout).ReturnValue;
+        nint nameAddress = _remoteCall.InvokePointer(_exports.ClassGetName.Value, classAddress, timeout).ReturnValue;
+        nint namespaceAddress = _remoteCall.InvokePointer(_exports.ClassGetNamespace.Value, classAddress, timeout).ReturnValue;
+
+        if (imageAddress == 0)
+            throw new InvalidDataException($"IL2CPP returned a null image for class 0x{classAddress:X}.");
+
+        if (nameAddress == 0 || namespaceAddress == 0)
+            throw new InvalidDataException($"IL2CPP returned an invalid semantic identity for class 0x{classAddress:X}.");
+
+        string name = _target.Memory.ReadNullTerminatedUtf8(nameAddress, MaximumRuntimeNameLength);
+        string namespaceName = _target.Memory.ReadNullTerminatedUtf8(namespaceAddress, MaximumRuntimeNameLength);
+
+        if (string.IsNullOrWhiteSpace(name))
+            throw new InvalidDataException($"IL2CPP returned an empty class name for class 0x{classAddress:X}.");
+
+        return new RuntimeClassInfo(classAddress, imageAddress, namespaceName, name);
+    }
+
+    /// <summary>Enumerates classes through an IL2CPP iterator API receiving <c>Il2CppClass*</c> and <c>void**</c>.</summary>
+    /// <param name="functionAddress">The iterator function address.</param>
+    /// <param name="classAddress">The declaring class supplied as the first argument.</param>
+    /// <param name="timeout">The maximum duration allowed for each iterator call.</param>
+    /// <param name="entityName">The diagnostic entity name used in validation errors.</param>
+    /// <returns>The immutable native class-address snapshot.</returns>
+    private IReadOnlyList<nint> EnumerateClasses(nint functionAddress, nint classAddress, TimeSpan timeout, string entityName)
+    {
+        const int maximumRelatedTypeCount = 65536;
+        List<nint> results = new();
+        nuint iterator = 0;
+
+        while (results.Count < maximumRelatedTypeCount)
+        {
+            nuint previousIterator = iterator;
+            RemoteCallPointerSizeOutResult result = _remoteCall.InvokePointerWithNuintRefArgument(functionAddress, classAddress, iterator, timeout);
+            iterator = result.OutValue;
+
+            if (result.ReturnValue == 0)
+                return results.AsReadOnly();
+
+            if (previousIterator != 0 && iterator == previousIterator)
+                throw new InvalidDataException($"IL2CPP {entityName} enumeration for class 0x{classAddress:X} returned an entry without advancing its iterator.");
+
+            results.Add(result.ReturnValue);
+        }
+
+        throw new InvalidDataException($"IL2CPP {entityName} enumeration for class 0x{classAddress:X} exceeded the defensive limit of {maximumRelatedTypeCount} entries.");
+    }
+
+    /// <summary>Validates one native class identity before a class-oriented runtime operation.</summary>
+    /// <param name="classAddress">The class address supplied by the caller.</param>
+    private static void ValidateClassAddress(nint classAddress)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class pointer cannot be zero.");
     }
 
     /// <summary>
