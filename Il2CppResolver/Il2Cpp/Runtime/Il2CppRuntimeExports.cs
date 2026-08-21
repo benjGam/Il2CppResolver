@@ -112,6 +112,21 @@ internal sealed class Il2CppRuntimeExports
     /// <summary>Defines the optional export used to retrieve the metadata token associated with a method.</summary>
     private const string MethodGetTokenExportName = "il2cpp_method_get_token";
 
+    /// <summary>Defines the optional export used to retrieve a managed string length.</summary>
+    private const string StringLengthExportName = "il2cpp_string_length";
+    /// <summary>Defines the optional export used to retrieve the UTF-16 character buffer of a managed string.</summary>
+    private const string StringCharsExportName = "il2cpp_string_chars";
+    /// <summary>Defines the optional export used to retrieve the logical length of a managed array.</summary>
+    private const string ArrayLengthExportName = "il2cpp_array_length";
+    /// <summary>Defines the optional export used to retrieve the payload byte length of a managed array.</summary>
+    private const string ArrayGetByteLengthExportName = "il2cpp_array_get_byte_length";
+    /// <summary>Defines the optional export used to retrieve the native element size of an array class.</summary>
+    private const string ArrayElementSizeExportName = "il2cpp_array_element_size";
+    /// <summary>Defines the optional export used to retrieve the element class represented by an array class.</summary>
+    private const string ClassGetElementClassExportName = "il2cpp_class_get_element_class";
+    /// <summary>Defines the optional export used to retrieve the canonical IL2CPP type represented by a class.</summary>
+    private const string ClassGetTypeExportName = "il2cpp_class_get_type";
+
     /// <summary>Gets the native address of <c>il2cpp_domain_get</c>.</summary>
     public nint DomainGet { get; }
     /// <summary>Gets the native address of <c>il2cpp_domain_get_assemblies</c>.</summary>
@@ -212,6 +227,21 @@ internal sealed class Il2CppRuntimeExports
     /// <summary>Gets the optional native address of <c>il2cpp_method_get_token</c>.</summary>
     public nint? MethodGetToken { get; }
 
+    /// <summary>Gets the optional native address of <c>il2cpp_string_length</c>.</summary>
+    public nint? StringLength { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_string_chars</c>.</summary>
+    public nint? StringChars { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_array_length</c>.</summary>
+    public nint? ArrayLength { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_array_get_byte_length</c>.</summary>
+    public nint? ArrayGetByteLength { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_array_element_size</c>.</summary>
+    public nint? ArrayElementSize { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_element_class</c>.</summary>
+    public nint? ClassGetElementClass { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_type</c>.</summary>
+    public nint? ClassGetType { get; }
+
     /// <summary>Initializes the complete export snapshot from one already parsed GameAssembly image.</summary>
     /// <param name="image">The loaded GameAssembly PE image whose direct exports should be resolved.</param>
     private Il2CppRuntimeExports(PeImage image)
@@ -266,6 +296,13 @@ internal sealed class Il2CppRuntimeExports
         MethodIsGeneric = ResolveOptionalExport(image, MethodIsGenericExportName);
         MethodIsInflated = ResolveOptionalExport(image, MethodIsInflatedExportName);
         MethodGetToken = ResolveOptionalExport(image, MethodGetTokenExportName);
+        StringLength = ResolveOptionalExport(image, StringLengthExportName);
+        StringChars = ResolveOptionalExport(image, StringCharsExportName);
+        ArrayLength = ResolveOptionalExport(image, ArrayLengthExportName);
+        ArrayGetByteLength = ResolveOptionalExport(image, ArrayGetByteLengthExportName);
+        ArrayElementSize = ResolveOptionalExport(image, ArrayElementSizeExportName);
+        ClassGetElementClass = ResolveOptionalExport(image, ClassGetElementClassExportName);
+        ClassGetType = ResolveOptionalExport(image, ClassGetTypeExportName);
     }
 
     /// <summary>Resolves all required exports and discovers every optional capability exposed by the target GameAssembly.</summary>

@@ -1,30 +1,36 @@
 using UnityIl2CppResolver.Il2Cpp.Results;
 using UnityIl2CppResolver.Il2Cpp.Runtime.Catalog;
 using UnityIl2CppResolver.Native.Memory;
+using RuntimeClassMetadata = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppClassMetadata;
 using RuntimeTypeDescriptor = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppTypeDescriptor;
 
 namespace UnityIl2CppResolver.Il2Cpp.Values;
 
 /// <summary>
 /// Reads explicitly supported field values from validated IL2CPP storage locations.
-/// The reader validates storage kind, runtime field type, static or instance bounds and complete memory readability before any bytes are interpreted as a managed value.
+/// The reader validates storage kind, runtime type, static or instance bounds and complete memory readability before interpreting scalars, enums, references, strings, arrays or explicitly validated blittable value types.
 /// </summary>
 internal sealed class Il2CppFieldValueReader
 {
     /// <summary>Provides safe read-only access to the target process address space.</summary>
     private readonly ProcessMemory _memory;
-    /// <summary>Provides cached runtime type descriptors and instance-size information.</summary>
+    /// <summary>Provides cached runtime type descriptors, metadata and instance-size information.</summary>
     private readonly Il2CppTypeCatalog _types;
+    /// <summary>Decodes validated managed string references.</summary>
+    private readonly Il2CppStringReader _strings;
 
     /// <summary>Initializes a field-value reader over the specified process memory and runtime type catalogue.</summary>
     /// <param name="memory">The read-only target process memory accessor.</param>
     /// <param name="types">The session-scoped type introspection catalogue.</param>
-    public Il2CppFieldValueReader(ProcessMemory memory, Il2CppTypeCatalog types)
+    /// <param name="strings">The managed-string reader reused by string field operations.</param>
+    public Il2CppFieldValueReader(ProcessMemory memory, Il2CppTypeCatalog types, Il2CppStringReader strings)
     {
         ArgumentNullException.ThrowIfNull(memory);
         ArgumentNullException.ThrowIfNull(types);
+        ArgumentNullException.ThrowIfNull(strings);
         _memory = memory;
         _types = types;
+        _strings = strings;
     }
 
     /// <summary>Reads a supported unmanaged scalar from validated normal static-field storage.</summary>
@@ -56,6 +62,34 @@ internal sealed class Il2CppFieldValueReader
         return _memory.ReadPointer(storage.StorageAddress);
     }
 
+    /// <summary>Reads a managed <c>System.String</c> from validated normal static-field storage.</summary>
+    /// <param name="field">The resolved normal static string field.</param>
+    /// <param name="storage">The validated concrete static-field storage mapping.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    public string? ReadStaticString(ResolvedField field, ResolvedFieldStorage storage)
+    {
+        ValidateStaticField(field, storage);
+        RuntimeTypeDescriptor descriptor = _types.GetTypeDescriptor(field.RuntimeTypeAddress);
+        int size = FieldValueTypeValidator.ValidateString(descriptor);
+        ValidateStaticBounds(storage, size);
+        ValidateReadable(storage.StorageAddress, size);
+        return _strings.Read(_memory.ReadPointer(storage.StorageAddress));
+    }
+
+    /// <summary>Reads a single-dimensional zero-based managed array reference from validated normal static-field storage.</summary>
+    /// <param name="field">The resolved normal static array field.</param>
+    /// <param name="storage">The validated concrete static-field storage mapping.</param>
+    /// <returns>The remote <c>Il2CppArray*</c> address, or zero for a null array reference.</returns>
+    public nint ReadStaticArrayReference(ResolvedField field, ResolvedFieldStorage storage)
+    {
+        ValidateStaticField(field, storage);
+        RuntimeTypeDescriptor descriptor = _types.GetTypeDescriptor(field.RuntimeTypeAddress);
+        int size = FieldValueTypeValidator.ValidateVectorArray(descriptor);
+        ValidateStaticBounds(storage, size);
+        ValidateReadable(storage.StorageAddress, size);
+        return _memory.ReadPointer(storage.StorageAddress);
+    }
+
     /// <summary>Reads an enum value from validated normal static-field storage.</summary>
     /// <typeparam name="TEnum">The exact managed enum type expected by the field.</typeparam>
     /// <param name="field">The resolved normal static enum field.</param>
@@ -69,6 +103,26 @@ internal sealed class Il2CppFieldValueReader
         ValidateStaticBounds(storage, size);
         ValidateReadable(storage.StorageAddress, size);
         return _memory.Read<TEnum>(storage.StorageAddress);
+    }
+
+    /// <summary>Reads one explicitly validated blittable value type from normal static-field storage.</summary>
+    /// <typeparam name="T">The unmanaged managed structure matching the IL2CPP field type.</typeparam>
+    /// <param name="field">The resolved normal static value-type field.</param>
+    /// <param name="storage">The validated concrete static-field storage mapping.</param>
+    /// <returns>The raw blittable value reconstructed from target memory.</returns>
+    public T ReadStaticBlittable<T>(ResolvedField field, ResolvedFieldStorage storage) where T : unmanaged
+    {
+        ValidateStaticField(field, storage);
+        RuntimeTypeDescriptor descriptor = _types.GetTypeDescriptor(field.RuntimeTypeAddress);
+
+        if (descriptor.ClassAddress == 0)
+            throw new InvalidDataException($"IL2CPP field type '{descriptor.TypeName}' does not expose a runtime class identity.");
+
+        RuntimeClassMetadata metadata = _types.GetClassMetadata(descriptor.ClassAddress);
+        int size = FieldValueTypeValidator.ValidateBlittable<T>(descriptor, metadata);
+        ValidateStaticBounds(storage, size);
+        ValidateReadable(storage.StorageAddress, size);
+        return _memory.Read<T>(storage.StorageAddress);
     }
 
     /// <summary>Reads a supported unmanaged scalar from one reference-type IL2CPP object instance.</summary>
@@ -100,6 +154,34 @@ internal sealed class Il2CppFieldValueReader
         return _memory.ReadPointer(storageAddress);
     }
 
+    /// <summary>Reads a managed <c>System.String</c> from one reference-type IL2CPP object instance.</summary>
+    /// <param name="field">The resolved instance string field.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> base address containing the field.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    public string? ReadInstanceString(ResolvedField field, nint instanceAddress)
+    {
+        ValidateInstanceField(field, instanceAddress);
+        RuntimeTypeDescriptor descriptor = _types.GetTypeDescriptor(field.RuntimeTypeAddress);
+        int size = FieldValueTypeValidator.ValidateString(descriptor);
+        nint storageAddress = GetInstanceStorageAddress(field, instanceAddress, size);
+        ValidateReadable(storageAddress, size);
+        return _strings.Read(_memory.ReadPointer(storageAddress));
+    }
+
+    /// <summary>Reads a single-dimensional zero-based managed array reference from one reference-type IL2CPP object instance.</summary>
+    /// <param name="field">The resolved instance array field.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> base address containing the field.</param>
+    /// <returns>The remote <c>Il2CppArray*</c> address, or zero for a null array reference.</returns>
+    public nint ReadInstanceArrayReference(ResolvedField field, nint instanceAddress)
+    {
+        ValidateInstanceField(field, instanceAddress);
+        RuntimeTypeDescriptor descriptor = _types.GetTypeDescriptor(field.RuntimeTypeAddress);
+        int size = FieldValueTypeValidator.ValidateVectorArray(descriptor);
+        nint storageAddress = GetInstanceStorageAddress(field, instanceAddress, size);
+        ValidateReadable(storageAddress, size);
+        return _memory.ReadPointer(storageAddress);
+    }
+
     /// <summary>Reads an enum value from one reference-type IL2CPP object instance.</summary>
     /// <typeparam name="TEnum">The exact managed enum type expected by the field.</typeparam>
     /// <param name="field">The resolved instance enum field.</param>
@@ -113,6 +195,26 @@ internal sealed class Il2CppFieldValueReader
         nint storageAddress = GetInstanceStorageAddress(field, instanceAddress, size);
         ValidateReadable(storageAddress, size);
         return _memory.Read<TEnum>(storageAddress);
+    }
+
+    /// <summary>Reads one explicitly validated blittable value type from a reference-type IL2CPP object instance.</summary>
+    /// <typeparam name="T">The unmanaged managed structure matching the IL2CPP field type.</typeparam>
+    /// <param name="field">The resolved instance value-type field.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> base address containing the field.</param>
+    /// <returns>The raw blittable value reconstructed from target memory.</returns>
+    public T ReadInstanceBlittable<T>(ResolvedField field, nint instanceAddress) where T : unmanaged
+    {
+        ValidateInstanceField(field, instanceAddress);
+        RuntimeTypeDescriptor descriptor = _types.GetTypeDescriptor(field.RuntimeTypeAddress);
+
+        if (descriptor.ClassAddress == 0)
+            throw new InvalidDataException($"IL2CPP field type '{descriptor.TypeName}' does not expose a runtime class identity.");
+
+        RuntimeClassMetadata metadata = _types.GetClassMetadata(descriptor.ClassAddress);
+        int size = FieldValueTypeValidator.ValidateBlittable<T>(descriptor, metadata);
+        nint storageAddress = GetInstanceStorageAddress(field, instanceAddress, size);
+        ValidateReadable(storageAddress, size);
+        return _memory.Read<T>(storageAddress);
     }
 
     /// <summary>Validates that the requested field and mapping represent the same normal static storage identity.</summary>

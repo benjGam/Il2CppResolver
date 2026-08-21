@@ -153,6 +153,56 @@ public sealed class ResolvedField
         return _navigator.ReadStaticFieldEnum<TEnum>(this, layout, _generation);
     }
 
+    /// <summary>Reads this normal static field as a managed <c>System.String</c>.</summary>
+    /// <returns>The decoded string, <see cref="string.Empty"/> for an empty string, or <see langword="null"/> for a null reference.</returns>
+    public string? ReadStaticString()
+    {
+        return _navigator.ReadStaticFieldString(this, _generation);
+    }
+
+    /// <summary>Reads this normal static field as a managed <c>System.String</c> using one explicit class-layout override.</summary>
+    /// <param name="layout">The one-shot Il2CppClass structural layout used to map static storage.</param>
+    /// <returns>The decoded string, <see cref="string.Empty"/> for an empty string, or <see langword="null"/> for a null reference.</returns>
+    public string? ReadStaticString(Il2CppClassLayout layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        return _navigator.ReadStaticFieldString(this, layout, _generation);
+    }
+
+    /// <summary>Reads this normal static field as a single-dimensional zero-based managed array.</summary>
+    /// <returns>The validated session-bound array, or <see langword="null"/> for a null reference.</returns>
+    public ResolvedArray? ReadStaticArray()
+    {
+        return _navigator.ReadStaticFieldArray(this, _generation);
+    }
+
+    /// <summary>Reads this normal static field as a single-dimensional zero-based managed array using one explicit class-layout override.</summary>
+    /// <param name="layout">The one-shot Il2CppClass structural layout used to map static storage.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/> for a null reference.</returns>
+    public ResolvedArray? ReadStaticArray(Il2CppClassLayout layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        return _navigator.ReadStaticFieldArray(this, layout, _generation);
+    }
+
+    /// <summary>Reads this normal static field as one explicitly validated blittable value type without managed marshalling.</summary>
+    /// <typeparam name="T">The unmanaged managed value type whose semantic identity and native size must match the IL2CPP field.</typeparam>
+    /// <returns>The raw blittable value reconstructed from target memory.</returns>
+    public T ReadStaticBlittable<T>() where T : unmanaged
+    {
+        return _navigator.ReadStaticFieldBlittable<T>(this, _generation);
+    }
+
+    /// <summary>Reads this normal static field as one explicitly validated blittable value type using one explicit class-layout override.</summary>
+    /// <typeparam name="T">The unmanaged managed value type whose semantic identity and native size must match the IL2CPP field.</typeparam>
+    /// <param name="layout">The one-shot Il2CppClass structural layout used to map static storage.</param>
+    /// <returns>The raw blittable value reconstructed from target memory.</returns>
+    public T ReadStaticBlittable<T>(Il2CppClassLayout layout) where T : unmanaged
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        return _navigator.ReadStaticFieldBlittable<T>(this, layout, _generation);
+    }
+
     /// <summary>Reads a supported unmanaged scalar from this instance field relative to one remote IL2CPP object.</summary>
     /// <typeparam name="T">The exact supported scalar type expected by the IL2CPP field.</typeparam>
     /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> address containing the field.</param>
@@ -177,5 +227,30 @@ public sealed class ResolvedField
     public TEnum ReadEnum<TEnum>(nint instanceAddress) where TEnum : unmanaged, Enum
     {
         return _navigator.ReadInstanceFieldEnum<TEnum>(this, instanceAddress, _generation);
+    }
+
+    /// <summary>Reads this instance field as a managed <c>System.String</c> relative to one remote IL2CPP object.</summary>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> address containing the field.</param>
+    /// <returns>The decoded string, <see cref="string.Empty"/> for an empty string, or <see langword="null"/> for a null reference.</returns>
+    public string? ReadString(nint instanceAddress)
+    {
+        return _navigator.ReadInstanceFieldString(this, instanceAddress, _generation);
+    }
+
+    /// <summary>Reads this instance field as a single-dimensional zero-based managed array relative to one remote IL2CPP object.</summary>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> address containing the field.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/> for a null reference.</returns>
+    public ResolvedArray? ReadArray(nint instanceAddress)
+    {
+        return _navigator.ReadInstanceFieldArray(this, instanceAddress, _generation);
+    }
+
+    /// <summary>Reads this instance field as one explicitly validated blittable value type without managed marshalling.</summary>
+    /// <typeparam name="T">The unmanaged managed value type whose semantic identity and native size must match the IL2CPP field.</typeparam>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> address containing the field.</param>
+    /// <returns>The raw blittable value reconstructed from target memory.</returns>
+    public T ReadBlittable<T>(nint instanceAddress) where T : unmanaged
+    {
+        return _navigator.ReadInstanceFieldBlittable<T>(this, instanceAddress, _generation);
     }
 }

@@ -205,4 +205,105 @@ internal interface IResolutionNavigator
     /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
     /// <returns>The validated enum value.</returns>
     TEnum ReadInstanceFieldEnum<TEnum>(ResolvedField field, nint instanceAddress, long generation) where TEnum : unmanaged, Enum;
+
+    /// <summary>Reads a managed string from a normal static field using the session's active storage-selection policy.</summary>
+    /// <param name="field">The resolved normal static string field.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    string? ReadStaticFieldString(ResolvedField field, long generation);
+
+    /// <summary>Reads a managed string from a normal static field using one explicit class-layout override.</summary>
+    /// <param name="field">The resolved normal static string field.</param>
+    /// <param name="layout">The one-shot class layout override.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    string? ReadStaticFieldString(ResolvedField field, Il2CppClassLayout layout, long generation);
+
+    /// <summary>Reads a single-dimensional zero-based managed array from a normal static field using the active storage-selection policy.</summary>
+    /// <param name="field">The resolved normal static array field.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/> for a null reference.</returns>
+    ResolvedArray? ReadStaticFieldArray(ResolvedField field, long generation);
+
+    /// <summary>Reads a single-dimensional zero-based managed array from a normal static field using one explicit class-layout override.</summary>
+    /// <param name="field">The resolved normal static array field.</param>
+    /// <param name="layout">The one-shot class layout override.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/> for a null reference.</returns>
+    ResolvedArray? ReadStaticFieldArray(ResolvedField field, Il2CppClassLayout layout, long generation);
+
+    /// <summary>Reads one explicitly validated blittable value type from a normal static field using the active storage-selection policy.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP field.</typeparam>
+    /// <param name="field">The resolved normal static value-type field.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The raw blittable value reconstructed from target memory.</returns>
+    T ReadStaticFieldBlittable<T>(ResolvedField field, long generation) where T : unmanaged;
+
+    /// <summary>Reads one explicitly validated blittable value type from a normal static field using one explicit class-layout override.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP field.</typeparam>
+    /// <param name="field">The resolved normal static value-type field.</param>
+    /// <param name="layout">The one-shot class layout override.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The raw blittable value reconstructed from target memory.</returns>
+    T ReadStaticFieldBlittable<T>(ResolvedField field, Il2CppClassLayout layout, long generation) where T : unmanaged;
+
+    /// <summary>Reads a managed string from an instance field relative to one remote IL2CPP object.</summary>
+    /// <param name="field">The resolved instance string field.</param>
+    /// <param name="instanceAddress">The remote object base address.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    string? ReadInstanceFieldString(ResolvedField field, nint instanceAddress, long generation);
+
+    /// <summary>Reads a single-dimensional zero-based managed array from an instance field relative to one remote IL2CPP object.</summary>
+    /// <param name="field">The resolved instance array field.</param>
+    /// <param name="instanceAddress">The remote object base address.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/> for a null reference.</returns>
+    ResolvedArray? ReadInstanceFieldArray(ResolvedField field, nint instanceAddress, long generation);
+
+    /// <summary>Reads one explicitly validated blittable value type from an instance field relative to one remote IL2CPP object.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP field.</typeparam>
+    /// <param name="field">The resolved instance value-type field.</param>
+    /// <param name="instanceAddress">The remote object base address.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The raw blittable value reconstructed from target memory.</returns>
+    T ReadInstanceFieldBlittable<T>(ResolvedField field, nint instanceAddress, long generation) where T : unmanaged;
+
+    /// <summary>Reads one explicitly supported scalar element from a validated array.</summary>
+    /// <typeparam name="T">The exact supported scalar element type.</typeparam>
+    /// <param name="array">The session-bound array.</param>
+    /// <param name="index">The zero-based element index.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="array"/>.</param>
+    /// <returns>The validated scalar element.</returns>
+    T ReadArrayElement<T>(ResolvedArray array, int index, long generation) where T : unmanaged;
+
+    /// <summary>Reads one enum element from a validated array.</summary>
+    /// <typeparam name="TEnum">The exact managed enum element type.</typeparam>
+    /// <param name="array">The session-bound array.</param>
+    /// <param name="index">The zero-based element index.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="array"/>.</param>
+    /// <returns>The validated enum element.</returns>
+    TEnum ReadArrayElementEnum<TEnum>(ResolvedArray array, int index, long generation) where TEnum : unmanaged, Enum;
+
+    /// <summary>Reads one managed-reference element from a validated array.</summary>
+    /// <param name="array">The session-bound array.</param>
+    /// <param name="index">The zero-based element index.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="array"/>.</param>
+    /// <returns>The remote referenced object address, or zero.</returns>
+    nint ReadArrayElementReference(ResolvedArray array, int index, long generation);
+
+    /// <summary>Reads one managed string element from a validated array.</summary>
+    /// <param name="array">The session-bound array.</param>
+    /// <param name="index">The zero-based element index.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="array"/>.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    string? ReadArrayElementString(ResolvedArray array, int index, long generation);
+
+    /// <summary>Reads one explicitly validated blittable value-type element from a validated array.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP element type.</typeparam>
+    /// <param name="array">The session-bound array.</param>
+    /// <param name="index">The zero-based element index.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="array"/>.</param>
+    /// <returns>The raw blittable element reconstructed from target memory.</returns>
+    T ReadArrayElementBlittable<T>(ResolvedArray array, int index, long generation) where T : unmanaged;
 }

@@ -32,6 +32,10 @@ internal sealed class Il2CppTypeCatalog
     private readonly Dictionary<nint, IReadOnlyList<nint>> _interfaces = new();
     /// <summary>Stores nested-type snapshots indexed by declaring class identity.</summary>
     private readonly Dictionary<nint, IReadOnlyList<nint>> _nestedTypes = new();
+    /// <summary>Stores canonical array element type identities indexed by array-class identity.</summary>
+    private readonly Dictionary<nint, nint> _arrayElementTypes = new();
+    /// <summary>Stores native array element sizes indexed by array-class identity.</summary>
+    private readonly Dictionary<nint, int> _arrayElementSizes = new();
 
     /// <summary>Initializes a session-scoped type catalogue.</summary>
     /// <param name="runtime">The live IL2CPP runtime used to materialize missing entries.</param>
@@ -169,6 +173,33 @@ internal sealed class Il2CppTypeCatalog
         return nestedTypes;
     }
 
+    /// <summary>Gets the canonical element type represented by one single-dimensional array class.</summary>
+    /// <param name="arrayClassAddress">The native array <c>Il2CppClass*</c> identity.</param>
+    /// <returns>The canonical element <c>Il2CppType*</c> address.</returns>
+    public nint GetArrayElementTypeAddress(nint arrayClassAddress)
+    {
+        if (_arrayElementTypes.TryGetValue(arrayClassAddress, out nint typeAddress))
+            return typeAddress;
+
+        nint elementClassAddress = _runtime.GetArrayElementClass(arrayClassAddress, _callTimeout);
+        typeAddress = _runtime.GetClassType(elementClassAddress, _callTimeout);
+        _arrayElementTypes.Add(arrayClassAddress, typeAddress);
+        return typeAddress;
+    }
+
+    /// <summary>Gets the native element size represented by one array class.</summary>
+    /// <param name="arrayClassAddress">The native array <c>Il2CppClass*</c> identity.</param>
+    /// <returns>The positive native element size in bytes.</returns>
+    public int GetArrayElementSize(nint arrayClassAddress)
+    {
+        if (_arrayElementSizes.TryGetValue(arrayClassAddress, out int size))
+            return size;
+
+        size = _runtime.GetArrayElementSize(arrayClassAddress, _callTimeout);
+        _arrayElementSizes.Add(arrayClassAddress, size);
+        return size;
+    }
+
     /// <summary>Clears every lazily materialized type, metadata and relationship snapshot.</summary>
     public void Clear()
     {
@@ -181,5 +212,7 @@ internal sealed class Il2CppTypeCatalog
         _declaringTypes.Clear();
         _interfaces.Clear();
         _nestedTypes.Clear();
+        _arrayElementTypes.Clear();
+        _arrayElementSizes.Clear();
     }
 }

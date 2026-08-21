@@ -47,8 +47,12 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
     private readonly Il2CppLayoutRegistry _layoutRegistry;
     /// <summary>Resolves static-field storage through optional public IL2CPP runtime APIs when available.</summary>
     private readonly Il2CppRuntimeStaticFieldStorageResolver _runtimeStaticFieldStorageResolver;
-    /// <summary>Reads validated scalar, enum and managed-reference field values from concrete target storage.</summary>
+    /// <summary>Decodes managed strings through public IL2CPP string APIs and validated target memory.</summary>
+    private readonly Il2CppStringReader _stringReader;
+    /// <summary>Reads validated scalar, enum, reference, string, array-reference and blittable field values from concrete target storage.</summary>
     private readonly Il2CppFieldValueReader _fieldValueReader;
+    /// <summary>Materializes and reads validated single-dimensional zero-based managed arrays.</summary>
+    private readonly Il2CppArrayReader _arrayReader;
     /// <summary>Defines the maximum duration allowed for each individual remote IL2CPP runtime invocation.</summary>
     private readonly TimeSpan _callTimeout;
 
@@ -116,7 +120,9 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
         _binding = binding;
         _layoutRegistry = layoutRegistry;
         _runtimeStaticFieldStorageResolver = runtimeStaticFieldStorageResolver;
-        _fieldValueReader = new Il2CppFieldValueReader(target.Memory, runtimeCatalog.GetTypeCatalog());
+        _stringReader = new Il2CppStringReader(target.Memory, runtime, callTimeout);
+        _fieldValueReader = new Il2CppFieldValueReader(target.Memory, runtimeCatalog.GetTypeCatalog(), _stringReader);
+        _arrayReader = new Il2CppArrayReader(target.Memory, runtime, runtimeCatalog.GetTypeCatalog(), _stringReader, callTimeout);
         _callTimeout = callTimeout;
     }
 
@@ -855,6 +861,186 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
             ValidateGeneration(generation);
             ArgumentNullException.ThrowIfNull(field);
             return _fieldValueReader.ReadInstanceEnum<TEnum>(field, instanceAddress);
+        }
+    }
+
+    /// <summary>Reads a managed string from a normal static field through the active storage-selection policy after validating the originating generation.</summary>
+    string? IResolutionNavigator.ReadStaticFieldString(ResolvedField field, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ResolvedFieldStorage storage = ResolveFieldStorageDefaultCore(field);
+            return _fieldValueReader.ReadStaticString(field, storage);
+        }
+    }
+
+    /// <summary>Reads a managed string from a normal static field through one explicit class-layout override after validating the originating generation.</summary>
+    string? IResolutionNavigator.ReadStaticFieldString(ResolvedField field, Il2CppClassLayout layout, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ArgumentNullException.ThrowIfNull(layout);
+            ResolvedFieldStorage storage = ResolveFieldStorageCore(field, layout);
+            return _fieldValueReader.ReadStaticString(field, storage);
+        }
+    }
+
+    /// <summary>Reads a vector-array reference from a normal static field and materializes a session-bound array result.</summary>
+    ResolvedArray? IResolutionNavigator.ReadStaticFieldArray(ResolvedField field, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ResolvedFieldStorage storage = ResolveFieldStorageDefaultCore(field);
+            nint arrayAddress = _fieldValueReader.ReadStaticArrayReference(field, storage);
+            return arrayAddress == 0 ? null : _arrayReader.Resolve(arrayAddress, field.RuntimeTypeAddress, _binding, generation);
+        }
+    }
+
+    /// <summary>Reads a vector-array reference from a normal static field through one explicit class-layout override and materializes a session-bound array result.</summary>
+    ResolvedArray? IResolutionNavigator.ReadStaticFieldArray(ResolvedField field, Il2CppClassLayout layout, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ArgumentNullException.ThrowIfNull(layout);
+            ResolvedFieldStorage storage = ResolveFieldStorageCore(field, layout);
+            nint arrayAddress = _fieldValueReader.ReadStaticArrayReference(field, storage);
+            return arrayAddress == 0 ? null : _arrayReader.Resolve(arrayAddress, field.RuntimeTypeAddress, _binding, generation);
+        }
+    }
+
+    /// <summary>Reads one explicitly validated blittable value type from a normal static field through the active storage-selection policy.</summary>
+    T IResolutionNavigator.ReadStaticFieldBlittable<T>(ResolvedField field, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ResolvedFieldStorage storage = ResolveFieldStorageDefaultCore(field);
+            return _fieldValueReader.ReadStaticBlittable<T>(field, storage);
+        }
+    }
+
+    /// <summary>Reads one explicitly validated blittable value type from a normal static field through one explicit class-layout override.</summary>
+    T IResolutionNavigator.ReadStaticFieldBlittable<T>(ResolvedField field, Il2CppClassLayout layout, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ArgumentNullException.ThrowIfNull(layout);
+            ResolvedFieldStorage storage = ResolveFieldStorageCore(field, layout);
+            return _fieldValueReader.ReadStaticBlittable<T>(field, storage);
+        }
+    }
+
+    /// <summary>Reads a managed string from an instance field relative to one remote IL2CPP object after validating the originating generation.</summary>
+    string? IResolutionNavigator.ReadInstanceFieldString(ResolvedField field, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            return _fieldValueReader.ReadInstanceString(field, instanceAddress);
+        }
+    }
+
+    /// <summary>Reads a vector-array reference from an instance field and materializes a session-bound array result.</summary>
+    ResolvedArray? IResolutionNavigator.ReadInstanceFieldArray(ResolvedField field, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            nint arrayAddress = _fieldValueReader.ReadInstanceArrayReference(field, instanceAddress);
+            return arrayAddress == 0 ? null : _arrayReader.Resolve(arrayAddress, field.RuntimeTypeAddress, _binding, generation);
+        }
+    }
+
+    /// <summary>Reads one explicitly validated blittable value type from an instance field relative to one remote IL2CPP object.</summary>
+    T IResolutionNavigator.ReadInstanceFieldBlittable<T>(ResolvedField field, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            return _fieldValueReader.ReadInstanceBlittable<T>(field, instanceAddress);
+        }
+    }
+
+    /// <summary>Reads one explicitly supported scalar element from a session-bound array after validating the originating generation.</summary>
+    T IResolutionNavigator.ReadArrayElement<T>(ResolvedArray array, int index, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(array);
+            return _arrayReader.Read<T>(array, index);
+        }
+    }
+
+    /// <summary>Reads one enum element from a session-bound array after validating the originating generation.</summary>
+    TEnum IResolutionNavigator.ReadArrayElementEnum<TEnum>(ResolvedArray array, int index, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(array);
+            return _arrayReader.ReadEnum<TEnum>(array, index);
+        }
+    }
+
+    /// <summary>Reads one managed-reference element from a session-bound array after validating the originating generation.</summary>
+    nint IResolutionNavigator.ReadArrayElementReference(ResolvedArray array, int index, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(array);
+            return _arrayReader.ReadReference(array, index);
+        }
+    }
+
+    /// <summary>Reads one managed-string element from a session-bound array after validating the originating generation.</summary>
+    string? IResolutionNavigator.ReadArrayElementString(ResolvedArray array, int index, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(array);
+            return _arrayReader.ReadString(array, index);
+        }
+    }
+
+    /// <summary>Reads one explicitly validated blittable value-type element from a session-bound array after validating the originating generation.</summary>
+    T IResolutionNavigator.ReadArrayElementBlittable<T>(ResolvedArray array, int index, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(array);
+            return _arrayReader.ReadBlittable<T>(array, index);
         }
     }
 

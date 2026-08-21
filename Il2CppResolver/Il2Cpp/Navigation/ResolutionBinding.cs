@@ -234,6 +234,107 @@ internal sealed class ResolutionBinding : IResolutionNavigator
     /// <returns>The validated enum value.</returns>
     public TEnum ReadInstanceFieldEnum<TEnum>(ResolvedField field, nint instanceAddress, long generation) where TEnum : unmanaged, Enum => GetNavigator().ReadInstanceFieldEnum<TEnum>(field, instanceAddress, generation);
 
+    /// <summary>Forwards a managed-string normal-static field read through the active storage-selection policy.</summary>
+    /// <param name="field">The resolved normal static string field.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    public string? ReadStaticFieldString(ResolvedField field, long generation) => GetNavigator().ReadStaticFieldString(field, generation);
+
+    /// <summary>Forwards a managed-string normal-static field read through one explicit class-layout override.</summary>
+    /// <param name="field">The resolved normal static string field.</param>
+    /// <param name="layout">The one-shot class layout override.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    public string? ReadStaticFieldString(ResolvedField field, Il2CppClassLayout layout, long generation) => GetNavigator().ReadStaticFieldString(field, layout, generation);
+
+    /// <summary>Forwards a vector-array normal-static field read through the active storage-selection policy.</summary>
+    /// <param name="field">The resolved normal static array field.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/>.</returns>
+    public ResolvedArray? ReadStaticFieldArray(ResolvedField field, long generation) => GetNavigator().ReadStaticFieldArray(field, generation);
+
+    /// <summary>Forwards a vector-array normal-static field read through one explicit class-layout override.</summary>
+    /// <param name="field">The resolved normal static array field.</param>
+    /// <param name="layout">The one-shot class layout override.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/>.</returns>
+    public ResolvedArray? ReadStaticFieldArray(ResolvedField field, Il2CppClassLayout layout, long generation) => GetNavigator().ReadStaticFieldArray(field, layout, generation);
+
+    /// <summary>Forwards a blittable normal-static field read through the active storage-selection policy.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP field.</typeparam>
+    /// <param name="field">The resolved normal static value-type field.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated raw blittable value.</returns>
+    public T ReadStaticFieldBlittable<T>(ResolvedField field, long generation) where T : unmanaged => GetNavigator().ReadStaticFieldBlittable<T>(field, generation);
+
+    /// <summary>Forwards a blittable normal-static field read through one explicit class-layout override.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP field.</typeparam>
+    /// <param name="field">The resolved normal static value-type field.</param>
+    /// <param name="layout">The one-shot class layout override.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated raw blittable value.</returns>
+    public T ReadStaticFieldBlittable<T>(ResolvedField field, Il2CppClassLayout layout, long generation) where T : unmanaged => GetNavigator().ReadStaticFieldBlittable<T>(field, layout, generation);
+
+    /// <summary>Forwards a managed-string instance field read.</summary>
+    /// <param name="field">The resolved instance string field.</param>
+    /// <param name="instanceAddress">The remote object base address.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    public string? ReadInstanceFieldString(ResolvedField field, nint instanceAddress, long generation) => GetNavigator().ReadInstanceFieldString(field, instanceAddress, generation);
+
+    /// <summary>Forwards a vector-array instance field read.</summary>
+    /// <param name="field">The resolved instance array field.</param>
+    /// <param name="instanceAddress">The remote object base address.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated session-bound array, or <see langword="null"/>.</returns>
+    public ResolvedArray? ReadInstanceFieldArray(ResolvedField field, nint instanceAddress, long generation) => GetNavigator().ReadInstanceFieldArray(field, instanceAddress, generation);
+
+    /// <summary>Forwards a blittable instance field read.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP field.</typeparam>
+    /// <param name="field">The resolved instance value-type field.</param>
+    /// <param name="instanceAddress">The remote object base address.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated raw blittable value.</returns>
+    public T ReadInstanceFieldBlittable<T>(ResolvedField field, nint instanceAddress, long generation) where T : unmanaged => GetNavigator().ReadInstanceFieldBlittable<T>(field, instanceAddress, generation);
+
+    /// <summary>Forwards one scalar array-element read.</summary>
+    /// <typeparam name="T">The exact supported scalar element type.</typeparam>
+    /// <param name="array">The session-bound array.</param>
+    /// <param name="index">The zero-based element index.</param>
+    /// <param name="generation">The cache generation that produced the array.</param>
+    /// <returns>The validated scalar element.</returns>
+    public T ReadArrayElement<T>(ResolvedArray array, int index, long generation) where T : unmanaged => GetNavigator().ReadArrayElement<T>(array, index, generation);
+
+    /// <summary>Forwards one enum array-element read.</summary>
+    /// <typeparam name="TEnum">The exact managed enum element type.</typeparam>
+    /// <param name="array">The session-bound array.</param>
+    /// <param name="index">The zero-based element index.</param>
+    /// <param name="generation">The cache generation that produced the array.</param>
+    /// <returns>The validated enum element.</returns>
+    public TEnum ReadArrayElementEnum<TEnum>(ResolvedArray array, int index, long generation) where TEnum : unmanaged, Enum => GetNavigator().ReadArrayElementEnum<TEnum>(array, index, generation);
+
+    /// <summary>Forwards one managed-reference array-element read.</summary>
+    /// <param name="array">The session-bound array.</param>
+    /// <param name="index">The zero-based element index.</param>
+    /// <param name="generation">The cache generation that produced the array.</param>
+    /// <returns>The remote referenced object address, or zero.</returns>
+    public nint ReadArrayElementReference(ResolvedArray array, int index, long generation) => GetNavigator().ReadArrayElementReference(array, index, generation);
+
+    /// <summary>Forwards one managed-string array-element read.</summary>
+    /// <param name="array">The session-bound array.</param>
+    /// <param name="index">The zero-based element index.</param>
+    /// <param name="generation">The cache generation that produced the array.</param>
+    /// <returns>The decoded string, an empty string, or <see langword="null"/>.</returns>
+    public string? ReadArrayElementString(ResolvedArray array, int index, long generation) => GetNavigator().ReadArrayElementString(array, index, generation);
+
+    /// <summary>Forwards one blittable array-element read.</summary>
+    /// <typeparam name="T">The unmanaged managed value type matching the IL2CPP element type.</typeparam>
+    /// <param name="array">The session-bound array.</param>
+    /// <param name="index">The zero-based element index.</param>
+    /// <param name="generation">The cache generation that produced the array.</param>
+    /// <returns>The validated raw blittable element.</returns>
+    public T ReadArrayElementBlittable<T>(ResolvedArray array, int index, long generation) where T : unmanaged => GetNavigator().ReadArrayElementBlittable<T>(array, index, generation);
+
     /// <summary>Gets the attached navigator or rejects navigation before session construction has completed.</summary>
     /// <returns>The fully initialized session navigator.</returns>
     /// <exception cref="InvalidOperationException">Thrown when no navigator has been attached yet.</exception>

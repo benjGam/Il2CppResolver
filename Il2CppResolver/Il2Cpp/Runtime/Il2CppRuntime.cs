@@ -717,6 +717,133 @@ internal sealed class Il2CppRuntime
         return new RuntimeTypeDescriptor(typeAddress, typeCode, typeName, classAddress, isValueType, isEnum, enumUnderlyingTypeCode);
     }
 
+    /// <summary>Retrieves the UTF-16 character count of one live managed string.</summary>
+    /// <param name="stringAddress">The remote <c>Il2CppString*</c> address.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The number of UTF-16 code units in the string, excluding any trailing terminator.</returns>
+    public int GetStringLength(nint stringAddress, TimeSpan timeout)
+    {
+        if (stringAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(stringAddress), "The IL2CPP string pointer cannot be zero.");
+
+        if (!Capabilities.CanReadManagedStrings || _exports.StringLength is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose managed string length inspection.");
+
+        int length = _remoteCall.InvokeInt32(_exports.StringLength.Value, stringAddress, timeout);
+
+        if (length < 0)
+            throw new InvalidDataException($"IL2CPP returned invalid string length {length} for string 0x{stringAddress:X}.");
+
+        return length;
+    }
+
+    /// <summary>Retrieves the UTF-16 character buffer of one live managed string.</summary>
+    /// <param name="stringAddress">The remote <c>Il2CppString*</c> address.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The remote <c>Il2CppChar*</c> character-buffer address.</returns>
+    public nint GetStringChars(nint stringAddress, TimeSpan timeout)
+    {
+        if (stringAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(stringAddress), "The IL2CPP string pointer cannot be zero.");
+
+        if (!Capabilities.CanReadManagedStrings || _exports.StringChars is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose managed string character-buffer inspection.");
+
+        nint charsAddress = _remoteCall.InvokePointer(_exports.StringChars.Value, stringAddress, timeout).ReturnValue;
+
+        if (charsAddress == 0)
+            throw new InvalidDataException($"IL2CPP returned a null character buffer for string 0x{stringAddress:X}.");
+
+        return charsAddress;
+    }
+
+    /// <summary>Retrieves the logical element count of one live managed array.</summary>
+    /// <param name="arrayAddress">The remote <c>Il2CppArray*</c> address.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The array element count.</returns>
+    public uint GetArrayLength(nint arrayAddress, TimeSpan timeout)
+    {
+        if (arrayAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(arrayAddress), "The IL2CPP array pointer cannot be zero.");
+
+        if (!Capabilities.CanInspectArrays || _exports.ArrayLength is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose managed array length inspection.");
+
+        return _remoteCall.InvokeUInt32(_exports.ArrayLength.Value, arrayAddress, timeout);
+    }
+
+    /// <summary>Retrieves the payload byte length of one live managed array.</summary>
+    /// <param name="arrayAddress">The remote <c>Il2CppArray*</c> address.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The number of payload bytes occupied by the array elements.</returns>
+    public uint GetArrayByteLength(nint arrayAddress, TimeSpan timeout)
+    {
+        if (arrayAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(arrayAddress), "The IL2CPP array pointer cannot be zero.");
+
+        if (!Capabilities.CanInspectArrays || _exports.ArrayGetByteLength is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose managed array byte-length inspection.");
+
+        return _remoteCall.InvokeUInt32(_exports.ArrayGetByteLength.Value, arrayAddress, timeout);
+    }
+
+    /// <summary>Retrieves the native element size associated with one array class.</summary>
+    /// <param name="arrayClassAddress">The native array <c>Il2CppClass*</c> address.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The positive native element size in bytes.</returns>
+    public int GetArrayElementSize(nint arrayClassAddress, TimeSpan timeout)
+    {
+        ValidateClassAddress(arrayClassAddress);
+
+        if (!Capabilities.CanInspectArrays || _exports.ArrayElementSize is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose array element-size inspection.");
+
+        int size = _remoteCall.InvokeInt32(_exports.ArrayElementSize.Value, arrayClassAddress, timeout);
+
+        if (size <= 0)
+            throw new InvalidDataException($"IL2CPP returned invalid array element size {size} for class 0x{arrayClassAddress:X}.");
+
+        return size;
+    }
+
+    /// <summary>Retrieves the element class represented by one array class.</summary>
+    /// <param name="arrayClassAddress">The native array <c>Il2CppClass*</c> address.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The element <c>Il2CppClass*</c> address.</returns>
+    public nint GetArrayElementClass(nint arrayClassAddress, TimeSpan timeout)
+    {
+        ValidateClassAddress(arrayClassAddress);
+
+        if (!Capabilities.CanInspectArrays || _exports.ClassGetElementClass is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose array element-class inspection.");
+
+        nint elementClass = _remoteCall.InvokePointer(_exports.ClassGetElementClass.Value, arrayClassAddress, timeout).ReturnValue;
+
+        if (elementClass == 0)
+            throw new InvalidDataException($"IL2CPP returned a null element class for array class 0x{arrayClassAddress:X}.");
+
+        return elementClass;
+    }
+
+    /// <summary>Retrieves the canonical runtime type represented by one class.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> address.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The canonical <c>Il2CppType*</c> address.</returns>
+    public nint GetClassType(nint classAddress, TimeSpan timeout)
+    {
+        ValidateClassAddress(classAddress);
+
+        if (!Capabilities.CanInspectArrays || _exports.ClassGetType is null)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose class-to-type inspection required for arrays.");
+
+        nint typeAddress = _remoteCall.InvokePointer(_exports.ClassGetType.Value, classAddress, timeout).ReturnValue;
+
+        if (typeAddress == 0)
+            throw new InvalidDataException($"IL2CPP returned a null type for class 0x{classAddress:X}.");
+
+        return typeAddress;
+    }
+
     /// <summary>
     /// Retrieves complete public metadata for one live IL2CPP class.
     /// </summary>

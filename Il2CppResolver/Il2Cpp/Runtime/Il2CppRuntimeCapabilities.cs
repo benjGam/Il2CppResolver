@@ -18,6 +18,10 @@ internal sealed class Il2CppRuntimeCapabilities
     public bool CanInspectTypeMetadata { get; }
     /// <summary>Gets a value indicating whether complete public method metadata can be materialized.</summary>
     public bool CanInspectMethodMetadata { get; }
+    /// <summary>Gets a value indicating whether managed <c>System.String</c> instances can be decoded through public IL2CPP string APIs.</summary>
+    public bool CanReadManagedStrings { get; }
+    /// <summary>Gets a value indicating whether single-dimensional zero-based arrays can be inspected and read safely.</summary>
+    public bool CanInspectArrays { get; }
 
     /// <summary>Initializes the capability snapshot from the resolved runtime export table.</summary>
     /// <param name="exports">The validated runtime exports used to determine optional capabilities.</param>
@@ -31,5 +35,7 @@ internal sealed class Il2CppRuntimeCapabilities
         CanInspectFieldValueTypes = exports.TypeGetType is not null && exports.ClassFromType is not null && exports.ClassIsValueType is not null && exports.ClassIsEnum is not null;
         CanInspectTypeMetadata = exports.ClassGetFlags is not null && exports.ClassGetTypeToken is not null && exports.ClassIsValueType is not null && exports.ClassIsEnum is not null && exports.ClassIsBlittable is not null && exports.ClassIsGeneric is not null && exports.ClassIsInflated is not null;
         CanInspectMethodMetadata = exports.MethodGetFlags is not null && exports.MethodIsGeneric is not null && exports.MethodIsInflated is not null && exports.MethodGetToken is not null;
+        CanReadManagedStrings = exports.StringLength is not null && exports.StringChars is not null;
+        CanInspectArrays = CanInspectFieldValueTypes && exports.ArrayLength is not null && exports.ArrayGetByteLength is not null && exports.ArrayElementSize is not null && exports.ClassGetElementClass is not null && exports.ClassGetType is not null;
     }
 }
