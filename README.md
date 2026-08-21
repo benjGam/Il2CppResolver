@@ -56,6 +56,7 @@ The current implementation is runtime-backed: it discovers and calls exported IL
   - [Enumerating Properties by Name](#enumerating-properties-by-name)
   - [Enumerating All Properties](#enumerating-all-properties)
   - [Property Accessors](#property-accessors)
+  - [Property Value Reading](#property-value-reading)
 - [Fields](#fields)
   - [Targeted Field Resolution](#targeted-field-resolution)
   - [Enumerating Fields](#enumerating-fields)
@@ -81,6 +82,7 @@ The current implementation is runtime-backed: it discovers and calls exported IL
 - [Required and Optional Runtime Capabilities](#required-and-optional-runtime-capabilities)
   - [Optional type enumeration](#optional-type-enumeration)
   - [Optional property navigation](#optional-property-navigation)
+  - [Optional property getter invocation](#optional-property-getter-invocation)
   - [Optional runtime static-field storage](#optional-runtime-static-field-storage)
   - [Optional field-value inspection](#optional-field-value-inspection)
   - [Optional type relationships and metadata](#optional-type-relationships-and-metadata)
@@ -103,6 +105,7 @@ The current implementation is runtime-backed: it discovers and calls exported IL
 - Enumerate all methods or only overloads sharing one method name.
 - Resolve properties by exact name and ordered index-parameter type names.
 - Enumerate properties and reuse getter/setter methods through the runtime identity map.
+- Invoke parameterless property getters through the supported IL2CPP runtime API with explicit thread attachment, managed-exception capture, virtual dispatch, and strong GC rooting of returned objects.
 - Resolve fields and classify their runtime storage kind.
 - Read explicitly supported scalar, enum, managed-reference, managed-string, vector-array, and blittable value-type field values with runtime type and storage-bound validation.
 - Navigate parent types, interfaces, nested types, and declaring types through session-bound resolved objects.
@@ -137,6 +140,7 @@ Some features are capability-based rather than attachment requirements:
 
 - `ResolvedAssembly.GetTypes()` requires the optional image/class enumeration exports.
 - Property navigation and `ResolveProperty(...)` require the optional public IL2CPP property exports.
+- Property value reading additionally requires the optional runtime invocation, object inspection, thread attachment, unboxing, assignability, virtual dispatch, and GC-handle APIs.
 - Runtime-API static-field storage requires both optional static-storage exports.
 - Safe field-value reading requires the optional IL2CPP type-classification APIs; instance reads additionally require class instance-size inspection.
 - Managed string decoding, vector-array inspection, and blittable value-type reads each depend on their own optional runtime exports and fail independently when unavailable.
@@ -152,6 +156,7 @@ Normal consumers should only need:
 
 ```csharp
 using UnityIl2CppResolver.Il2Cpp;
+using UnityIl2CppResolver.Il2Cpp.Invocation;
 using UnityIl2CppResolver.Il2Cpp.Layouts;
 using UnityIl2CppResolver.Il2Cpp.Queries;
 using UnityIl2CppResolver.Il2Cpp.Results;
@@ -1038,7 +1043,54 @@ ResolvedMethod? setter = property.Setter;
 
 If the same accessor is later resolved through `ResolveMethod`, the resolver returns the same `ResolvedMethod` object within the active cache generation.
 
-A property does **not** imply storage and does not expose a `ResolveStorage` endpoint. Reading a property value would require invoking its getter, which belongs to the separate managed-invocation problem and is intentionally outside the current API.
+A property does **not** imply storage and does not expose a `ResolveStorage` endpoint. Property value reads invoke the getter and therefore execute managed target code; they are fundamentally different from field-memory reads.
+
+## Property Value Reading
+
+`ResolvedProperty` can invoke a **parameterless getter** through `il2cpp_runtime_invoke`. Static and instance calls are explicit so accidental instance/static mismatches are rejected before managed execution:
+
+```csharp
+float pollingFrequency = inputSystem.ResolveProperty("pollingFrequency").ReadStatic<float>();
+
+nint settingsObject = inputSystem.ResolveProperty("settings").ReadStaticReference();
+
+ResolvedType settingsType = resolver.ResolveType(
+    new TypeQuery(
+        "Unity.InputSystem",
+        "UnityEngine.InputSystem",
+        "InputSettings"));
+
+float defaultPressPoint = settingsType
+    .ResolveProperty("defaultButtonPressPoint")
+    .Read<float>(settingsObject);
+```
+
+Supported return categories mirror the validated field-value readers:
+
+```csharp
+property.Read<T>(instance);
+property.ReadStatic<T>();
+property.ReadEnum<TEnum>(instance);
+property.ReadStaticEnum<TEnum>();
+property.ReadReference(instance);
+property.ReadStaticReference();
+property.ReadString(instance);
+property.ReadStaticString();
+property.ReadArray(instance);
+property.ReadStaticArray();
+property.ReadBlittable<T>(instance);
+property.ReadStaticBlittable<T>();
+```
+
+Getter invocation deliberately supports only non-indexed/parameterless accessors in this version. Indexers, setters, arbitrary arguments, and general `ResolvedMethod.Invoke(...)` remain outside the public API.
+
+Instance getter invocation validates the supplied object header, resolves its concrete runtime class, checks assignability to the property declaring type, and resolves virtual dispatch through `il2cpp_object_get_virtual_method` before invocation. Value-type declaring instances are intentionally unsupported.
+
+The remote invocation thread is attached to the active IL2CPP domain only for the managed call and detached afterward. A managed exception reported through the `Il2CppException**` output becomes `Il2CppInvocationException`, which exposes the remote exception object identity without attempting to marshal it.
+
+Non-null getter results are rooted with a strong IL2CPP GC handle before the invocation thread detaches. The resolver treats `Il2CppGCHandle` as an opaque pointer-sized value and preserves the complete native return register; this remains compatible with older runtimes whose GC-handle API returned a 32-bit identifier while supporting newer Unity runtimes where the public API uses the opaque `Il2CppGCHandle` type. Scalar, enum, string, and blittable results release that root after local decoding through the native `il2cpp_gchandle_free` API; GC-handle cleanup does not create a second attached IL2CPP thread. Raw reference and `ResolvedArray` results retain their roots until `ClearCache()` or resolver disposal so the target object cannot be collected immediately after the getter returns. If GC-handle cleanup cannot be completed safely, the handle is intentionally abandoned rather than retried blindly.
+
+> **Important:** a property read executes managed target code. A getter may allocate, mutate state, take locks, raise an exception, or perform arbitrary application logic. This API is therefore more invasive than reading a field from validated memory.
 
 ---
 
@@ -1703,7 +1755,8 @@ Il2Cpp/
 │   └── Catalog/             session-scoped runtime snapshots and indexes
 ├── Detection/               internal layout detectors
 ├── Mapping/                 internal method-code and field-storage mappers
-├── Values/                  internal field-type validation and safe value reading
+├── Invocation/              controlled parameterless property-getter invocation
+├── Values/                  internal field/type validation and safe value decoding
 └── Resolution/              semantic backend, cache and session orchestration
 ```
 
@@ -1751,7 +1804,7 @@ temporary execution
 persistent mutation
 ```
 
-The current resolver primarily uses reads and short-lived remote execution required to call IL2CPP runtime APIs.
+The resolver primarily uses reads and short-lived remote execution required to call IL2CPP runtime APIs. Property value reads additionally execute the resolved managed getter through `il2cpp_runtime_invoke`; callers should treat that endpoint as application code execution rather than passive inspection.
 
 ## Remote timeout safety
 
@@ -1814,6 +1867,25 @@ il2cpp_property_get_set_method
 
 If this capability is unavailable, assembly/type/method/field resolution remains usable while `GetProperties(...)` and `ResolveProperty(...)` throw `NotSupportedException`.
 
+## Optional property getter invocation
+
+Property value reading additionally requires:
+
+```text
+il2cpp_runtime_invoke
+il2cpp_object_unbox
+il2cpp_thread_attach
+il2cpp_thread_detach
+il2cpp_method_is_instance
+il2cpp_object_get_class
+il2cpp_object_get_virtual_method
+il2cpp_class_is_assignable_from
+il2cpp_gchandle_new
+il2cpp_gchandle_free
+```
+
+These exports remain optional. Missing invocation support does not affect property navigation or any semantic resolver operation; only property value reads throw `NotSupportedException`. Returned managed objects are strongly rooted before the temporary invocation thread detaches.
+
 ---
 
 ## Optional runtime static-field storage
@@ -1872,7 +1944,8 @@ The current implementation deliberately does **not** provide:
 - `ThreadStatic` value resolution.
 - Literal constant retrieval.
 - Field writes.
-- Property getter/setter invocation.
+- Property setter invocation.
+- Indexed/parameterized property getter invocation.
 - General managed method invocation.
 
 
@@ -1882,8 +1955,8 @@ Known boundaries include:
 
 - Windows x64 only.
 - Thread-static field storage is not resolved by the normal static-field storage API.
-- No general managed method invocation API.
-- Property getters/setters are resolved as methods, but property values are not invoked automatically.
+- No general managed method invocation API; the invocation layer is intentionally limited to parameterless property getters.
+- Property setters and indexed/parameterized getters remain unsupported.
 - A resolved native method address does not guarantee ABI-safe invocation.
 - Automatic MethodInfo detection depends on enough method evidence from the declaring type.
 - Automatic Il2CppClass detection requires consumer-provided normal static-field evidence across multiple classes.
@@ -1972,6 +2045,11 @@ if (properties.Count > 0)
     Console.WriteLine($"CanWrite:       {resolvedProperty.CanWrite}");
 }
 
+// Property value reads execute managed getter code.
+ResolvedProperty pollingFrequency = inputSystem.ResolveProperty("pollingFrequency");
+float currentPollingFrequency = pollingFrequency.ReadStatic<float>();
+Console.WriteLine($"Polling frequency: {currentPollingFrequency}");
+
 // Resolve one field.
 ResolvedField manager = inputSystem.ResolveField("s_Manager");
 
@@ -2031,6 +2109,8 @@ The current resolver has been exercised against a live IL2CPP target with valida
 - MethodInfo → native code validation;
 - static-field base + offset mapping;
 - exact scalar and managed-reference field reads;
+- static and instance parameterless property getter invocation with scalar/reference return validation;
+- managed-exception capture, object assignability checks, virtual dispatch, and generation invalidation for property reads;
 - managed-string decoding when a suitable live field is available;
 - vector-array inspection, element typing and bounds rejection when a suitable live field is available;
 - explicit rejection of scalar misuse through the blittable-structure API;
@@ -2050,7 +2130,7 @@ Integration tests should continue to distinguish functional assertions from timi
 
 Potential future work includes:
 
-- Controlled property getter invocation and property value reading, initially for parameterless getters through a dedicated invocation layer.
+- Indexed/parameterized property getter invocation with explicit argument marshalling, only if required by future consumers.
 - Thread-static storage resolution.
 - Literal constant retrieval.
 - Richer generic and nested semantic identities.
