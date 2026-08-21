@@ -12,6 +12,11 @@ internal sealed class Il2CppRuntimeCapabilities
     public bool CanEnumerateImageTypes { get; }
 
     /// <summary>
+    /// Gets a value indicating whether the target exposes the public APIs required to enumerate properties and inspect their accessors.
+    /// </summary>
+    public bool CanEnumerateProperties { get; }
+
+    /// <summary>
     /// Gets a value indicating whether the target exposes both public APIs required to obtain normal static-field storage without interpreting <c>Il2CppClass</c> internals.
     /// </summary>
     public bool HasStaticFieldStorageApi { get; }
@@ -24,6 +29,7 @@ internal sealed class Il2CppRuntimeCapabilities
     {
         ArgumentNullException.ThrowIfNull(exports);
         CanEnumerateImageTypes = exports.ImageGetClassCount is not null && exports.ImageGetClass is not null && exports.ClassGetName is not null && exports.ClassGetNamespace is not null;
+        CanEnumerateProperties = exports.ClassGetProperties is not null && exports.PropertyGetName is not null && exports.PropertyGetFlags is not null && exports.PropertyGetGetMethod is not null && exports.PropertyGetSetMethod is not null;
         HasStaticFieldStorageApi = exports.ClassGetStaticFieldData is not null && exports.ClassGetDataSize is not null;
     }
 }

@@ -5,7 +5,7 @@ namespace UnityIl2CppResolver.Il2Cpp.Results;
 
 /// <summary>
 /// Represents a managed type resolved to a concrete IL2CPP <c>Il2CppClass</c> and bound to the resolver session that produced it.
-/// The object exposes immutable semantic/runtime identity while delegating method and field navigation to session-scoped catalogues and caches.
+/// The object exposes immutable semantic/runtime identity while delegating method, field and property navigation to session-scoped catalogues and caches.
 /// </summary>
 public sealed class ResolvedType
 {
@@ -77,6 +77,37 @@ public sealed class ResolvedType
             throw new ArgumentException("Method parameter type names cannot contain empty values.", nameof(parameterTypeNames));
 
         return _navigator.ResolveMethod(this, methodName, Array.AsReadOnly(parameterTypeNames.ToArray()), _generation);
+    }
+
+    /// <summary>Enumerates every property declared by this runtime type.</summary>
+    /// <returns>All declared properties with semantic type, index signature and optional accessors.</returns>
+    public IReadOnlyList<ResolvedProperty> GetProperties()
+    {
+        return _navigator.GetProperties(this, _generation);
+    }
+
+    /// <summary>Enumerates every property declared by this runtime type with the exact requested property name.</summary>
+    /// <param name="name">The exact managed property name.</param>
+    /// <returns>All declared properties sharing the requested name.</returns>
+    public IReadOnlyList<ResolvedProperty> GetProperties(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        return _navigator.GetProperties(this, name, _generation);
+    }
+
+    /// <summary>Resolves one exact property relative to this already resolved declaring type.</summary>
+    /// <param name="propertyName">The exact managed property name.</param>
+    /// <param name="indexParameterTypeNames">The ordered semantic index-parameter type names identifying the property.</param>
+    /// <returns>The unique resolved property matching the requested signature.</returns>
+    public ResolvedProperty ResolveProperty(string propertyName, params string[] indexParameterTypeNames)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
+        ArgumentNullException.ThrowIfNull(indexParameterTypeNames);
+
+        if (indexParameterTypeNames.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("Property index parameter type names cannot contain empty values.", nameof(indexParameterTypeNames));
+
+        return _navigator.ResolveProperty(this, propertyName, Array.AsReadOnly(indexParameterTypeNames.ToArray()), _generation);
     }
 
     /// <summary>Enumerates every field declared by this runtime type.</summary>

@@ -45,7 +45,7 @@ internal sealed class Il2CppRuntime
     private const uint MaximumMethodParameterCount = 1024;
 
     /// <summary>
-    /// Defines the maximum UTF-8 byte length accepted for runtime method and type names.
+    /// Defines the maximum UTF-8 byte length accepted for runtime member and type names.
     /// </summary>
     private const int MaximumRuntimeNameLength = 4096;
 
@@ -53,6 +53,11 @@ internal sealed class Il2CppRuntime
     /// Defines the defensive maximum number of fields accepted while enumerating a single IL2CPP class.
     /// </summary>
     private const int MaximumFieldCount = 65536;
+
+    /// <summary>
+    /// Defines the defensive maximum number of properties accepted while enumerating a single IL2CPP class.
+    /// </summary>
+    private const int MaximumPropertyCount = 65536;
 
     /// <summary>
     /// Represents the validated IL2CPP target whose native runtime is inspected by this instance.
@@ -463,6 +468,115 @@ internal sealed class Il2CppRuntime
 
         _typeNames[typeAddress] = name;
         return name;
+    }
+
+    /// <summary>
+    /// Retrieves the native properties declared by the specified IL2CPP class through the optional property-enumeration runtime capability.
+    /// Enumeration follows the iterator contract exposed by <c>il2cpp_class_get_properties</c>.
+    /// </summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> whose properties should be enumerated.</param>
+    /// <param name="timeout">The maximum amount of time allowed for each individual runtime call.</param>
+    /// <returns>An immutable snapshot containing the discovered native <c>PropertyInfo*</c> addresses.</returns>
+    /// <exception cref="NotSupportedException">Thrown when the target does not expose the complete property navigation capability.</exception>
+    public IReadOnlyList<nint> GetProperties(nint classAddress, TimeSpan timeout)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class pointer cannot be zero.");
+
+        if (!_exports.ClassGetProperties.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose property enumeration.");
+
+        nint functionAddress = _exports.ClassGetProperties.Value;
+        List<nint> properties = new();
+        nuint iterator = 0;
+
+        while (properties.Count < MaximumPropertyCount)
+        {
+            nuint previousIterator = iterator;
+            RemoteCallPointerSizeOutResult result = _remoteCall.InvokePointerWithNuintRefArgument(functionAddress, classAddress, iterator, timeout);
+            iterator = result.OutValue;
+
+            if (result.ReturnValue == 0)
+                return properties.AsReadOnly();
+
+            if (previousIterator != 0 && iterator == previousIterator)
+                throw new InvalidDataException($"IL2CPP property enumeration for class 0x{classAddress:X} returned a property without advancing its iterator.");
+
+            properties.Add(result.ReturnValue);
+        }
+
+        throw new InvalidDataException($"IL2CPP property enumeration for class 0x{classAddress:X} exceeded the defensive limit of {MaximumPropertyCount} properties.");
+    }
+
+    /// <summary>Retrieves the semantic name associated with a runtime <c>PropertyInfo</c>.</summary>
+    /// <param name="propertyAddress">The native <c>PropertyInfo*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The managed property name exposed by IL2CPP.</returns>
+    public string GetPropertyName(nint propertyAddress, TimeSpan timeout)
+    {
+        if (propertyAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(propertyAddress), "The IL2CPP property pointer cannot be zero.");
+
+        if (!_exports.PropertyGetName.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose property-name inspection.");
+
+        RemoteCallResult result = _remoteCall.InvokePointer(_exports.PropertyGetName.Value, propertyAddress, timeout);
+
+        if (result.ReturnValue == 0)
+            throw new InvalidDataException($"IL2CPP returned a null name pointer for property 0x{propertyAddress:X}.");
+
+        string name = _target.Memory.ReadNullTerminatedUtf8(result.ReturnValue, MaximumRuntimeNameLength);
+
+        if (string.IsNullOrWhiteSpace(name))
+            throw new InvalidDataException($"IL2CPP returned an empty name for property 0x{propertyAddress:X}.");
+
+        return name;
+    }
+
+    /// <summary>Retrieves the getter <c>MethodInfo*</c> associated with a runtime property.</summary>
+    /// <param name="propertyAddress">The native <c>PropertyInfo*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The getter <c>MethodInfo*</c> address, or zero when the property has no getter.</returns>
+    public nint GetPropertyGetterMethod(nint propertyAddress, TimeSpan timeout)
+    {
+        if (propertyAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(propertyAddress), "The IL2CPP property pointer cannot be zero.");
+
+        if (!_exports.PropertyGetGetMethod.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose property getter inspection.");
+
+        return _remoteCall.InvokePointer(_exports.PropertyGetGetMethod.Value, propertyAddress, timeout).ReturnValue;
+    }
+
+    /// <summary>Retrieves the setter <c>MethodInfo*</c> associated with a runtime property.</summary>
+    /// <param name="propertyAddress">The native <c>PropertyInfo*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The setter <c>MethodInfo*</c> address, or zero when the property has no setter.</returns>
+    public nint GetPropertySetterMethod(nint propertyAddress, TimeSpan timeout)
+    {
+        if (propertyAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(propertyAddress), "The IL2CPP property pointer cannot be zero.");
+
+        if (!_exports.PropertyGetSetMethod.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose property setter inspection.");
+
+        return _remoteCall.InvokePointer(_exports.PropertyGetSetMethod.Value, propertyAddress, timeout).ReturnValue;
+    }
+
+    /// <summary>Retrieves the metadata attributes associated with a runtime property.</summary>
+    /// <param name="propertyAddress">The native <c>PropertyInfo*</c> to inspect.</param>
+    /// <param name="timeout">The maximum duration allowed for the native runtime call.</param>
+    /// <returns>The managed property metadata attributes exposed by IL2CPP.</returns>
+    public System.Reflection.PropertyAttributes GetPropertyAttributes(nint propertyAddress, TimeSpan timeout)
+    {
+        if (propertyAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(propertyAddress), "The IL2CPP property pointer cannot be zero.");
+
+        if (!_exports.PropertyGetFlags.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose property-attribute inspection.");
+
+        uint rawAttributes = _remoteCall.InvokeUInt32(_exports.PropertyGetFlags.Value, propertyAddress, timeout);
+        return (System.Reflection.PropertyAttributes)rawAttributes;
     }
 
     /// <summary>

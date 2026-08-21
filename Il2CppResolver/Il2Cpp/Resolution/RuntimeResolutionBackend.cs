@@ -7,6 +7,7 @@ using RuntimeAssemblyInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppAssem
 using RuntimeClassInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppClassInfo;
 using RuntimeFieldInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppFieldInfo;
 using RuntimeMethodInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppMethodInfo;
+using RuntimePropertyInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppPropertyInfo;
 
 namespace UnityIl2CppResolver.Il2Cpp.Resolution;
 
@@ -188,6 +189,77 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
         return GetOrCreateMethod(query, declaringType, match);
     }
 
+    /// <summary>Gets every property declared by an already resolved type and materializes semantic signatures from their accessor methods.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <returns>Every declared resolved property.</returns>
+    public IReadOnlyList<ResolvedProperty> GetProperties(ResolvedType type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        Il2CppClassMemberCatalog members = _catalog.GetClassMembers(type.ClassAddress);
+        IReadOnlyList<RuntimePropertyInfo> properties = members.GetProperties();
+        List<ResolvedProperty> results = new(properties.Count);
+
+        foreach (RuntimePropertyInfo property in properties)
+        {
+            PropertyQuery query = CreatePropertyQuery(type, property);
+            results.Add(GetOrCreateProperty(query, type, property, members));
+        }
+
+        return results.AsReadOnly();
+    }
+
+    /// <summary>Gets every property declared by a type with the exact requested property name while inspecting only matching candidates.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="name">The exact managed property name.</param>
+    /// <returns>Every matching resolved property.</returns>
+    public IReadOnlyList<ResolvedProperty> GetProperties(ResolvedType type, string name)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        Il2CppClassMemberCatalog members = _catalog.GetClassMembers(type.ClassAddress);
+        IReadOnlyList<RuntimePropertyInfo> properties = members.GetProperties(name);
+        List<ResolvedProperty> results = new(properties.Count);
+
+        foreach (RuntimePropertyInfo property in properties)
+            results.Add(GetOrCreateProperty(CreatePropertyQuery(type, property), type, property, members));
+
+        return results.AsReadOnly();
+    }
+
+    /// <summary>Resolves a managed property by exact name and ordered index-parameter type names.</summary>
+    /// <param name="query">The semantic property query identifying the requested property.</param>
+    /// <returns>The unique runtime property matching the requested semantic signature.</returns>
+    public ResolvedProperty ResolveProperty(PropertyQuery query)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        if (_cache.TryGetProperty(query, out ResolvedProperty? cachedProperty))
+            return cachedProperty;
+
+        ResolvedType declaringType = ResolveType(query.DeclaringType);
+        Il2CppClassMemberCatalog members = _catalog.GetClassMembers(declaringType.ClassAddress);
+        IReadOnlyList<nint> candidates = members.FindProperties(query.Name);
+        RuntimePropertyInfo? match = null;
+
+        foreach (nint propertyAddress in candidates)
+        {
+            RuntimePropertyInfo property = members.GetPropertyInfo(propertyAddress);
+
+            if (!ParametersMatch(property.IndexParameterTypeNames, query.IndexParameterTypeNames))
+                continue;
+
+            if (match is not null)
+                throw new InvalidDataException($"Multiple IL2CPP properties match semantic signature '{FormatPropertySignature(query)}'.");
+
+            match = property;
+        }
+
+        if (match is null)
+            throw new KeyNotFoundException($"IL2CPP property '{FormatPropertySignature(query)}' was not found.");
+
+        return GetOrCreateProperty(query, declaringType, match, members);
+    }
+
     /// <summary>Gets every field declared by an already resolved type and materializes complete semantic field descriptions.</summary>
     /// <param name="type">The resolved declaring type.</param>
     /// <returns>Every declared resolved field.</returns>
@@ -291,6 +363,40 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
         return result;
     }
 
+    /// <summary>Gets or creates the public property object associated with one native PropertyInfo identity and reuses identity-mapped accessor methods.</summary>
+    /// <param name="query">The semantic property identity associated with this access path.</param>
+    /// <param name="declaringType">The resolved declaring type.</param>
+    /// <param name="property">The complete runtime property description.</param>
+    /// <param name="members">The declaring class member catalogue used to resolve accessor signatures.</param>
+    /// <returns>The identity-mapped public property object.</returns>
+    private ResolvedProperty GetOrCreateProperty(PropertyQuery query, ResolvedType declaringType, RuntimePropertyInfo property, Il2CppClassMemberCatalog members)
+    {
+        if (_cache.TryGetPropertyByAddress(property.PropertyAddress, out ResolvedProperty? existing))
+        {
+            _cache.CachePropertyQuery(query, existing);
+            return existing;
+        }
+
+        ResolvedMethod? getter = null;
+        ResolvedMethod? setter = null;
+
+        if (property.GetterMethodAddress != 0)
+        {
+            RuntimeMethodInfo getterInfo = members.GetMethodInfo(property.GetterMethodAddress);
+            getter = GetOrCreateMethod(CreateMethodQuery(declaringType, getterInfo), declaringType, getterInfo);
+        }
+
+        if (property.SetterMethodAddress != 0)
+        {
+            RuntimeMethodInfo setterInfo = members.GetMethodInfo(property.SetterMethodAddress);
+            setter = GetOrCreateMethod(CreateMethodQuery(declaringType, setterInfo), declaringType, setterInfo);
+        }
+
+        ResolvedProperty result = new(query, declaringType, property.PropertyAddress, property.TypeName, property.IndexParameterTypeNames, property.Attributes, getter, setter);
+        _cache.StoreProperty(result);
+        return result;
+    }
+
     /// <summary>Gets or creates the public field object associated with one native FieldInfo identity and caches the supplied semantic alias.</summary>
     /// <param name="query">The semantic field identity associated with this access path.</param>
     /// <param name="declaringType">The resolved declaring type.</param>
@@ -317,6 +423,15 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
     private static MethodQuery CreateMethodQuery(ResolvedType declaringType, RuntimeMethodInfo method)
     {
         return new MethodQuery(declaringType.Query, method.Name, method.ParameterTypeNames.ToArray());
+    }
+
+    /// <summary>Creates a canonical semantic property query from an already resolved declaring type and runtime property signature.</summary>
+    /// <param name="declaringType">The resolved declaring type.</param>
+    /// <param name="property">The complete runtime property description.</param>
+    /// <returns>The semantic property identity represented by the runtime description.</returns>
+    private static PropertyQuery CreatePropertyQuery(ResolvedType declaringType, RuntimePropertyInfo property)
+    {
+        return new PropertyQuery(declaringType.Query, property.Name, property.IndexParameterTypeNames.ToArray());
     }
 
     /// <summary>Translates runtime field flags and raw offset into the public storage-kind model.</summary>
@@ -361,6 +476,14 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
         }
 
         return true;
+    }
+
+    /// <summary>Formats a semantic property query into a diagnostic signature.</summary>
+    /// <param name="query">The query to format.</param>
+    /// <returns>The fully qualified diagnostic property signature.</returns>
+    private static string FormatPropertySignature(PropertyQuery query)
+    {
+        return $"{query.DeclaringType.Namespace}.{query.DeclaringType.Name}.{query.Name}[{string.Join(", ", query.IndexParameterTypeNames)}]";
     }
 
     /// <summary>Formats a semantic method query into a diagnostic signature.</summary>

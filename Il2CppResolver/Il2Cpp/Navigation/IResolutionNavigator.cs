@@ -44,6 +44,27 @@ internal interface IResolutionNavigator
     /// <returns>The unique resolved method matching the requested signature.</returns>
     ResolvedMethod ResolveMethod(ResolvedType type, string methodName, IReadOnlyList<string> parameterTypeNames, long generation);
 
+    /// <summary>Gets every property declared by the specified resolved type.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>All declared properties with semantic signatures and optional accessors.</returns>
+    IReadOnlyList<ResolvedProperty> GetProperties(ResolvedType type, long generation);
+
+    /// <summary>Gets every property declared by the specified type with the exact requested property name.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="name">The exact managed property name.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>All matching properties.</returns>
+    IReadOnlyList<ResolvedProperty> GetProperties(ResolvedType type, string name, long generation);
+
+    /// <summary>Resolves one exact property relative to an already resolved declaring type.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="propertyName">The exact managed property name.</param>
+    /// <param name="indexParameterTypeNames">The ordered semantic index-parameter type names identifying the property.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>The unique resolved property matching the requested signature.</returns>
+    ResolvedProperty ResolveProperty(ResolvedType type, string propertyName, IReadOnlyList<string> indexParameterTypeNames, long generation);
+
     /// <summary>Gets every field declared by the specified resolved type.</summary>
     /// <param name="type">The resolved declaring type.</param>
     /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>

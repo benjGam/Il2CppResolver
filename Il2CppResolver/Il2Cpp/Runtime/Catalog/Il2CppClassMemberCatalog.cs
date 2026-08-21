@@ -1,11 +1,12 @@
 using RuntimeFieldInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppFieldInfo;
 using RuntimeMethodInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppMethodInfo;
+using RuntimePropertyInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppPropertyInfo;
 
 namespace UnityIl2CppResolver.Il2Cpp.Runtime.Catalog;
 
 /// <summary>
-/// Stores a lazy local snapshot of methods and fields declared by one runtime <c>Il2CppClass</c>.
-/// Enumeration and member-name inspection occur at most once per session snapshot, while complete method and field descriptions are loaded only for candidates that require semantic inspection.
+/// Stores a lazy local snapshot of methods, fields and properties declared by one runtime <c>Il2CppClass</c>.
+/// Enumeration and member-name inspection occur at most once per session snapshot, while complete member descriptions are loaded only for candidates that require semantic inspection.
 /// </summary>
 internal sealed class Il2CppClassMemberCatalog
 {
@@ -50,6 +51,15 @@ internal sealed class Il2CppClassMemberCatalog
     /// <summary>Stores field names indexed by native FieldInfo identity after field-name indexing.</summary>
     private readonly Dictionary<nint, string> _fieldNames = new();
 
+    /// <summary>Stores the raw property-address snapshot after the class property iterator has been consumed once.</summary>
+    private IReadOnlyList<nint>? _propertyAddresses;
+
+    /// <summary>Stores property addresses grouped by exact semantic name after the property-name index has been built once.</summary>
+    private Dictionary<string, List<nint>>? _propertiesByName;
+
+    /// <summary>Stores property names indexed by native PropertyInfo identity after property-name indexing.</summary>
+    private readonly Dictionary<nint, string> _propertyNames = new();
+
     /// <summary>
     /// Stores complete runtime method descriptions already required by semantic overload resolution.
     /// </summary>
@@ -59,6 +69,10 @@ internal sealed class Il2CppClassMemberCatalog
     /// Stores complete runtime field descriptions already required by semantic field resolution.
     /// </summary>
     private readonly Dictionary<nint, RuntimeFieldInfo> _fieldInfos = new();
+
+
+    /// <summary>Stores complete runtime property descriptions already required by semantic property resolution.</summary>
+    private readonly Dictionary<nint, RuntimePropertyInfo> _propertyInfos = new();
 
     /// <summary>
     /// Initializes a class-member catalogue for one runtime class.
@@ -201,6 +215,171 @@ internal sealed class Il2CppClassMemberCatalog
         field = _runtime.GetFieldInfo(fieldAddress, name, _callTimeout);
         _fieldInfos.Add(fieldAddress, field);
         return field;
+    }
+
+    /// <summary>Gets every property address declared by this class without forcing accessor signature inspection.</summary>
+    /// <returns>An immutable snapshot of the declared <c>PropertyInfo*</c> addresses.</returns>
+    public IReadOnlyList<nint> GetPropertyAddresses()
+    {
+        if (!_runtime.Capabilities.CanEnumerateProperties)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose the complete property navigation capability.");
+
+        if (_propertyAddresses is null)
+            _propertyAddresses = _runtime.GetProperties(_classAddress, _callTimeout);
+
+        return _propertyAddresses;
+    }
+
+    /// <summary>Gets property candidates whose exact runtime name matches the requested name.</summary>
+    /// <param name="name">The exact managed property name.</param>
+    /// <returns>The candidate <c>PropertyInfo*</c> addresses, or an empty list when no property has that name.</returns>
+    public IReadOnlyList<nint> FindProperties(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        EnsurePropertyIndex();
+        return _propertiesByName!.TryGetValue(name, out List<nint>? properties) ? properties : Array.Empty<nint>();
+    }
+
+    /// <summary>Gets complete runtime descriptions for every property declared by this class.</summary>
+    /// <returns>Every declared property with semantic type, index signature and accessor identities.</returns>
+    public IReadOnlyList<RuntimePropertyInfo> GetProperties()
+    {
+        IReadOnlyList<nint> addresses = GetPropertyAddresses();
+        List<RuntimePropertyInfo> properties = new(addresses.Count);
+
+        foreach (nint address in addresses)
+            properties.Add(GetPropertyInfo(address));
+
+        return properties.AsReadOnly();
+    }
+
+    /// <summary>Gets complete runtime descriptions for every property matching the exact requested name.</summary>
+    /// <param name="name">The exact managed property name.</param>
+    /// <returns>Every matching property with semantic type, index signature and accessor identities.</returns>
+    public IReadOnlyList<RuntimePropertyInfo> GetProperties(string name)
+    {
+        IReadOnlyList<nint> addresses = FindProperties(name);
+        List<RuntimePropertyInfo> properties = new(addresses.Count);
+
+        foreach (nint address in addresses)
+            properties.Add(GetPropertyInfo(address));
+
+        return properties.AsReadOnly();
+    }
+
+    /// <summary>Gets a complete runtime property description, reusing previously inspected accessors and signatures when available.</summary>
+    /// <param name="propertyAddress">The native <c>PropertyInfo*</c> to inspect.</param>
+    /// <returns>The cached or newly derived runtime property description.</returns>
+    public RuntimePropertyInfo GetPropertyInfo(nint propertyAddress)
+    {
+        if (_propertyInfos.TryGetValue(propertyAddress, out RuntimePropertyInfo? property))
+            return property;
+
+        EnsurePropertyIndex();
+        string name = _propertyNames.TryGetValue(propertyAddress, out string? knownName) ? knownName : _runtime.GetPropertyName(propertyAddress, _callTimeout);
+        nint getterAddress = _runtime.GetPropertyGetterMethod(propertyAddress, _callTimeout);
+        nint setterAddress = _runtime.GetPropertySetterMethod(propertyAddress, _callTimeout);
+
+        if (getterAddress == 0 && setterAddress == 0)
+            throw new InvalidDataException($"IL2CPP property '{name}' at 0x{propertyAddress:X} exposes neither a getter nor a setter method.");
+
+        RuntimeMethodInfo? getter = getterAddress != 0 ? GetMethodInfo(getterAddress) : null;
+        RuntimeMethodInfo? setter = setterAddress != 0 ? GetMethodInfo(setterAddress) : null;
+        DerivePropertySignature(name, propertyAddress, getter, setter, out string typeName, out IReadOnlyList<string> indexParameterTypeNames);
+        System.Reflection.PropertyAttributes attributes = _runtime.GetPropertyAttributes(propertyAddress, _callTimeout);
+        property = new RuntimePropertyInfo(propertyAddress, name, typeName, indexParameterTypeNames, attributes, getterAddress, setterAddress);
+        _propertyInfos.Add(propertyAddress, property);
+        return property;
+    }
+
+    /// <summary>Builds the local property-name index exactly once for this class snapshot.</summary>
+    private void EnsurePropertyIndex()
+    {
+        if (_propertiesByName is not null)
+            return;
+
+        Dictionary<string, List<nint>> index = new(StringComparer.Ordinal);
+        IReadOnlyList<nint> properties = GetPropertyAddresses();
+
+        foreach (nint propertyAddress in properties)
+        {
+            string name = _runtime.GetPropertyName(propertyAddress, _callTimeout);
+            _propertyNames[propertyAddress] = name;
+
+            if (!index.TryGetValue(name, out List<nint>? bucket))
+            {
+                bucket = new List<nint>();
+                index.Add(name, bucket);
+            }
+
+            bucket.Add(propertyAddress);
+        }
+
+        _propertiesByName = index;
+    }
+
+    /// <summary>Derives one canonical property signature from its getter and/or setter method descriptions and validates accessor consistency.</summary>
+    /// <param name="propertyName">The semantic property name used in diagnostics.</param>
+    /// <param name="propertyAddress">The native <c>PropertyInfo*</c> identity used in diagnostics.</param>
+    /// <param name="getter">The getter method description when present.</param>
+    /// <param name="setter">The setter method description when present.</param>
+    /// <param name="typeName">Receives the semantic property type name.</param>
+    /// <param name="indexParameterTypeNames">Receives the ordered semantic index-parameter type names.</param>
+    private static void DerivePropertySignature(string propertyName, nint propertyAddress, RuntimeMethodInfo? getter, RuntimeMethodInfo? setter, out string typeName, out IReadOnlyList<string> indexParameterTypeNames)
+    {
+        string? derivedTypeName = null;
+        IReadOnlyList<string>? derivedIndexParameters = null;
+
+        if (getter is not null)
+        {
+            if (string.Equals(getter.ReturnTypeName, "System.Void", StringComparison.Ordinal))
+                throw new InvalidDataException($"IL2CPP property '{propertyName}' at 0x{propertyAddress:X} exposes a getter returning System.Void.");
+
+            derivedTypeName = getter.ReturnTypeName;
+            derivedIndexParameters = Array.AsReadOnly(getter.ParameterTypeNames.ToArray());
+        }
+
+        if (setter is not null)
+        {
+            if (setter.ParameterTypeNames.Count == 0)
+                throw new InvalidDataException($"IL2CPP property '{propertyName}' at 0x{propertyAddress:X} exposes a setter without a value parameter.");
+
+            if (!string.Equals(setter.ReturnTypeName, "System.Void", StringComparison.Ordinal))
+                throw new InvalidDataException($"IL2CPP property '{propertyName}' at 0x{propertyAddress:X} exposes a setter returning '{setter.ReturnTypeName}' instead of System.Void.");
+
+            string setterTypeName = setter.ParameterTypeNames[^1];
+            string[] setterIndexParameters = setter.ParameterTypeNames.Take(setter.ParameterTypeNames.Count - 1).ToArray();
+
+            if (derivedTypeName is not null && !string.Equals(derivedTypeName, setterTypeName, StringComparison.Ordinal))
+                throw new InvalidDataException($"IL2CPP property '{propertyName}' at 0x{propertyAddress:X} exposes inconsistent getter and setter property types '{derivedTypeName}' and '{setterTypeName}'.");
+
+            if (derivedIndexParameters is not null && !ParametersMatch(derivedIndexParameters, setterIndexParameters))
+                throw new InvalidDataException($"IL2CPP property '{propertyName}' at 0x{propertyAddress:X} exposes inconsistent getter and setter index-parameter signatures.");
+
+            derivedTypeName ??= setterTypeName;
+            derivedIndexParameters ??= Array.AsReadOnly(setterIndexParameters);
+        }
+
+        typeName = derivedTypeName ?? throw new InvalidDataException($"IL2CPP property '{propertyName}' at 0x{propertyAddress:X} does not expose a derivable semantic type.");
+        indexParameterTypeNames = derivedIndexParameters ?? Array.Empty<string>();
+    }
+
+    /// <summary>Determines whether two ordered semantic type-name sequences are identical.</summary>
+    /// <param name="left">The first ordered type-name sequence.</param>
+    /// <param name="right">The second ordered type-name sequence.</param>
+    /// <returns><see langword="true"/> when both sequences contain the same names in the same order.</returns>
+    private static bool ParametersMatch(IReadOnlyList<string> left, IReadOnlyList<string> right)
+    {
+        if (left.Count != right.Count)
+            return false;
+
+        for (int index = 0; index < left.Count; index++)
+        {
+            if (!string.Equals(left[index], right[index], StringComparison.Ordinal))
+                return false;
+        }
+
+        return true;
     }
 
     /// <summary>

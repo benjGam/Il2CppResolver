@@ -33,6 +33,16 @@ internal sealed class Il2CppRuntimeExports
     private const string TypeGetNameExportName = "il2cpp_type_get_name";
     /// <summary>Defines the export used to enumerate fields declared by a class.</summary>
     private const string ClassGetFieldsExportName = "il2cpp_class_get_fields";
+    /// <summary>Defines the optional export used to enumerate properties declared by a class.</summary>
+    private const string ClassGetPropertiesExportName = "il2cpp_class_get_properties";
+    /// <summary>Defines the optional export used to retrieve the semantic name of a property.</summary>
+    private const string PropertyGetNameExportName = "il2cpp_property_get_name";
+    /// <summary>Defines the optional export used to retrieve property metadata attributes.</summary>
+    private const string PropertyGetFlagsExportName = "il2cpp_property_get_flags";
+    /// <summary>Defines the optional export used to retrieve the getter method associated with a property.</summary>
+    private const string PropertyGetGetMethodExportName = "il2cpp_property_get_get_method";
+    /// <summary>Defines the optional export used to retrieve the setter method associated with a property.</summary>
+    private const string PropertyGetSetMethodExportName = "il2cpp_property_get_set_method";
     /// <summary>Defines the export used to retrieve the semantic name of a field.</summary>
     private const string FieldGetNameExportName = "il2cpp_field_get_name";
     /// <summary>Defines the export used to retrieve the managed type associated with a field.</summary>
@@ -80,6 +90,16 @@ internal sealed class Il2CppRuntimeExports
     public nint TypeGetName { get; }
     /// <summary>Gets the native address of <c>il2cpp_class_get_fields</c>.</summary>
     public nint ClassGetFields { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_properties</c>.</summary>
+    public nint? ClassGetProperties { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_property_get_name</c>.</summary>
+    public nint? PropertyGetName { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_property_get_flags</c>.</summary>
+    public nint? PropertyGetFlags { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_property_get_get_method</c>.</summary>
+    public nint? PropertyGetGetMethod { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_property_get_set_method</c>.</summary>
+    public nint? PropertyGetSetMethod { get; }
     /// <summary>Gets the native address of <c>il2cpp_field_get_name</c>.</summary>
     public nint FieldGetName { get; }
     /// <summary>Gets the native address of <c>il2cpp_field_get_type</c>.</summary>
@@ -117,6 +137,11 @@ internal sealed class Il2CppRuntimeExports
     /// <param name="methodGetParam">The native address of <c>il2cpp_method_get_param</c>.</param>
     /// <param name="methodGetReturnType">The native address of <c>il2cpp_method_get_return_type</c>.</param>
     /// <param name="classGetFields">The native address of <c>il2cpp_class_get_fields</c>.</param>
+    /// <param name="classGetProperties">The optional native address of <c>il2cpp_class_get_properties</c>.</param>
+    /// <param name="propertyGetName">The optional native address of <c>il2cpp_property_get_name</c>.</param>
+    /// <param name="propertyGetFlags">The optional native address of <c>il2cpp_property_get_flags</c>.</param>
+    /// <param name="propertyGetGetMethod">The optional native address of <c>il2cpp_property_get_get_method</c>.</param>
+    /// <param name="propertyGetSetMethod">The optional native address of <c>il2cpp_property_get_set_method</c>.</param>
     /// <param name="fieldGetName">The native address of <c>il2cpp_field_get_name</c>.</param>
     /// <param name="fieldGetType">The native address of <c>il2cpp_field_get_type</c>.</param>
     /// <param name="fieldGetFlags">The native address of <c>il2cpp_field_get_flags</c>.</param>
@@ -129,7 +154,7 @@ internal sealed class Il2CppRuntimeExports
     /// <param name="classGetNamespace">The optional native address of <c>il2cpp_class_get_namespace</c>.</param>
     /// <param name="classGetStaticFieldData">The optional native address of <c>il2cpp_class_get_static_field_data</c>.</param>
     /// <param name="classGetDataSize">The optional native address of <c>il2cpp_class_get_data_size</c>.</param>
-    private Il2CppRuntimeExports(nint domainGet, nint domainGetAssemblies, nint assemblyGetImage, nint imageGetName, nint classFromName, nint classGetMethods, nint methodGetName, nint methodGetParamCount, nint methodGetParam, nint methodGetReturnType, nint classGetFields, nint fieldGetName, nint fieldGetType, nint fieldGetFlags, nint fieldGetOffset, nint typeGetName, nint free, nint? imageGetClassCount, nint? imageGetClass, nint? classGetName, nint? classGetNamespace, nint? classGetStaticFieldData, nint? classGetDataSize)
+    private Il2CppRuntimeExports(nint domainGet, nint domainGetAssemblies, nint assemblyGetImage, nint imageGetName, nint classFromName, nint classGetMethods, nint methodGetName, nint methodGetParamCount, nint methodGetParam, nint methodGetReturnType, nint classGetFields, nint? classGetProperties, nint? propertyGetName, nint? propertyGetFlags, nint? propertyGetGetMethod, nint? propertyGetSetMethod, nint fieldGetName, nint fieldGetType, nint fieldGetFlags, nint fieldGetOffset, nint typeGetName, nint free, nint? imageGetClassCount, nint? imageGetClass, nint? classGetName, nint? classGetNamespace, nint? classGetStaticFieldData, nint? classGetDataSize)
     {
         DomainGet = domainGet;
         DomainGetAssemblies = domainGetAssemblies;
@@ -142,6 +167,11 @@ internal sealed class Il2CppRuntimeExports
         MethodGetParam = methodGetParam;
         MethodGetReturnType = methodGetReturnType;
         ClassGetFields = classGetFields;
+        ClassGetProperties = classGetProperties;
+        PropertyGetName = propertyGetName;
+        PropertyGetFlags = propertyGetFlags;
+        PropertyGetGetMethod = propertyGetGetMethod;
+        PropertyGetSetMethod = propertyGetSetMethod;
         FieldGetName = fieldGetName;
         FieldGetType = fieldGetType;
         FieldGetFlags = fieldGetFlags;
@@ -179,6 +209,11 @@ internal sealed class Il2CppRuntimeExports
             ResolveRequiredExport(image, MethodGetParamExportName),
             ResolveRequiredExport(image, MethodGetReturnTypeExportName),
             ResolveRequiredExport(image, ClassGetFieldsExportName),
+            ResolveOptionalExport(image, ClassGetPropertiesExportName),
+            ResolveOptionalExport(image, PropertyGetNameExportName),
+            ResolveOptionalExport(image, PropertyGetFlagsExportName),
+            ResolveOptionalExport(image, PropertyGetGetMethodExportName),
+            ResolveOptionalExport(image, PropertyGetSetMethodExportName),
             ResolveRequiredExport(image, FieldGetNameExportName),
             ResolveRequiredExport(image, FieldGetTypeExportName),
             ResolveRequiredExport(image, FieldGetFlagsExportName),

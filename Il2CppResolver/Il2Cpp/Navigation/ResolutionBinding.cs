@@ -72,6 +72,27 @@ internal sealed class ResolutionBinding : IResolutionNavigator
     /// <returns>The unique resolved method matching the requested signature.</returns>
     public ResolvedMethod ResolveMethod(ResolvedType type, string methodName, IReadOnlyList<string> parameterTypeNames, long generation) => GetNavigator().ResolveMethod(type, methodName, parameterTypeNames, generation);
 
+    /// <summary>Forwards complete property enumeration for an already resolved declaring type.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="generation">The cache generation that produced the type.</param>
+    /// <returns>Every property declared by the type.</returns>
+    public IReadOnlyList<ResolvedProperty> GetProperties(ResolvedType type, long generation) => GetNavigator().GetProperties(type, generation);
+
+    /// <summary>Forwards name-filtered property enumeration for an already resolved declaring type.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="name">The exact managed property name.</param>
+    /// <param name="generation">The cache generation that produced the type.</param>
+    /// <returns>Every matching property.</returns>
+    public IReadOnlyList<ResolvedProperty> GetProperties(ResolvedType type, string name, long generation) => GetNavigator().GetProperties(type, name, generation);
+
+    /// <summary>Forwards targeted property resolution relative to an already resolved declaring type.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="propertyName">The exact managed property name.</param>
+    /// <param name="indexParameterTypeNames">The ordered semantic index-parameter type names identifying the property.</param>
+    /// <param name="generation">The cache generation that produced the type.</param>
+    /// <returns>The unique resolved property matching the requested signature.</returns>
+    public ResolvedProperty ResolveProperty(ResolvedType type, string propertyName, IReadOnlyList<string> indexParameterTypeNames, long generation) => GetNavigator().ResolveProperty(type, propertyName, indexParameterTypeNames, generation);
+
     /// <summary>Forwards complete field enumeration for an already resolved declaring type.</summary>
     /// <param name="type">The resolved declaring type.</param>
     /// <param name="generation">The cache generation that produced the type.</param>

@@ -19,6 +19,8 @@ internal sealed class ResolutionCache
     private readonly Dictionary<string, ResolvedMethod> _methods = new(StringComparer.Ordinal);
     /// <summary>Stores field resolution results indexed by exact semantic identity.</summary>
     private readonly Dictionary<string, ResolvedField> _fields = new(StringComparer.Ordinal);
+    /// <summary>Stores property resolution results indexed by exact semantic identity.</summary>
+    private readonly Dictionary<string, ResolvedProperty> _properties = new(StringComparer.Ordinal);
     /// <summary>Stores resolved assemblies indexed by native <c>Il2CppImage*</c> identity so enumeration and targeted resolution share one public object.</summary>
     private readonly Dictionary<nint, ResolvedAssembly> _assembliesByImageAddress = new();
     /// <summary>Stores resolved types indexed by native <c>Il2CppClass*</c> identity so enumeration and targeted resolution share one public object.</summary>
@@ -27,6 +29,8 @@ internal sealed class ResolutionCache
     private readonly Dictionary<nint, ResolvedMethod> _methodsByAddress = new();
     /// <summary>Stores resolved fields indexed by native <c>FieldInfo*</c> identity so field enumeration and targeted resolution share one public object.</summary>
     private readonly Dictionary<nint, ResolvedField> _fieldsByAddress = new();
+    /// <summary>Stores resolved properties indexed by native <c>PropertyInfo*</c> identity so property enumeration and targeted resolution share one public object.</summary>
+    private readonly Dictionary<nint, ResolvedProperty> _propertiesByAddress = new();
 
     /// <summary>
     /// Identifies one native method-code mapping by runtime method identity and exact structural profile evidence.
@@ -240,6 +244,47 @@ internal sealed class ResolutionCache
         return _fieldsByAddress.TryGetValue(fieldInfoAddress, out field);
     }
 
+    /// <summary>Attempts to retrieve a cached property resolution.</summary>
+    /// <param name="query">The semantic property query.</param>
+    /// <param name="property">Receives the cached result when available.</param>
+    /// <returns><see langword="true"/> when a cached result exists.</returns>
+    public bool TryGetProperty(PropertyQuery query, out ResolvedProperty? property)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return _properties.TryGetValue(BuildPropertyKey(query), out property);
+    }
+
+    /// <summary>Stores a successful property resolution.</summary>
+    /// <param name="property">The resolved property to cache.</param>
+    public void StoreProperty(ResolvedProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+        CachePropertyQuery(property.Query, property);
+        _propertiesByAddress[property.PropertyInfoAddress] = property;
+    }
+
+    /// <summary>Associates an additional semantic property query with an already materialized PropertyInfo identity.</summary>
+    /// <param name="query">The semantic alias that should resolve to the existing property object.</param>
+    /// <param name="property">The existing resolved property object.</param>
+    public void CachePropertyQuery(PropertyQuery query, ResolvedProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(property);
+        _properties[BuildPropertyKey(query)] = property;
+    }
+
+    /// <summary>Attempts to retrieve the public property object already associated with a native PropertyInfo identity.</summary>
+    /// <param name="propertyInfoAddress">The native <c>PropertyInfo*</c> address.</param>
+    /// <param name="property">Receives the existing resolved property when available.</param>
+    /// <returns><see langword="true"/> when the native property is already represented.</returns>
+    public bool TryGetPropertyByAddress(nint propertyInfoAddress, out ResolvedProperty? property)
+    {
+        if (propertyInfoAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(propertyInfoAddress), "The IL2CPP PropertyInfo address cannot be zero.");
+
+        return _propertiesByAddress.TryGetValue(propertyInfoAddress, out property);
+    }
+
     /// <summary>Attempts to retrieve layout-based field storage produced with the exact requested class layout.</summary>
     /// <param name="field">The resolved static field.</param>
     /// <param name="layout">The exact class layout requested.</param>
@@ -291,10 +336,12 @@ internal sealed class ResolutionCache
         _types.Clear();
         _methods.Clear();
         _fields.Clear();
+        _properties.Clear();
         _assembliesByImageAddress.Clear();
         _typesByClassAddress.Clear();
         _methodsByAddress.Clear();
         _fieldsByAddress.Clear();
+        _propertiesByAddress.Clear();
         _methodCodes.Clear();
         _fieldStorages.Clear();
         _runtimeFieldStorages.Clear();
@@ -329,6 +376,23 @@ internal sealed class ResolutionCache
 
         for (int index = 0; index < query.ParameterTypeNames.Count; index++)
             components[index + 4] = query.ParameterTypeNames[index];
+
+        return BuildCompositeKey(components);
+    }
+
+    /// <summary>Builds the exact cache identity associated with a property query.</summary>
+    /// <param name="query">The property query to encode.</param>
+    /// <returns>A deterministic collision-safe key including ordered index-parameter type names.</returns>
+    private static string BuildPropertyKey(PropertyQuery query)
+    {
+        string[] components = new string[checked(4 + query.IndexParameterTypeNames.Count)];
+        components[0] = query.DeclaringType.Assembly.Name;
+        components[1] = query.DeclaringType.Namespace;
+        components[2] = query.DeclaringType.Name;
+        components[3] = query.Name;
+
+        for (int index = 0; index < query.IndexParameterTypeNames.Count; index++)
+            components[index + 4] = query.IndexParameterTypeNames[index];
 
         return BuildCompositeKey(components);
     }

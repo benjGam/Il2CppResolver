@@ -44,6 +44,22 @@ internal interface IIl2CppResolutionBackend
     /// <returns>The resolved runtime method.</returns>
     ResolvedMethod ResolveMethod(MethodQuery query);
 
+    /// <summary>Gets every property declared by an already resolved type.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <returns>Every declared property.</returns>
+    IReadOnlyList<ResolvedProperty> GetProperties(ResolvedType type);
+
+    /// <summary>Gets every property declared by a type with the exact requested property name.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="name">The exact managed property name.</param>
+    /// <returns>Every matching property.</returns>
+    IReadOnlyList<ResolvedProperty> GetProperties(ResolvedType type, string name);
+
+    /// <summary>Resolves a semantic property query.</summary>
+    /// <param name="query">The property query to resolve.</param>
+    /// <returns>The resolved runtime property.</returns>
+    ResolvedProperty ResolveProperty(PropertyQuery query);
+
     /// <summary>Gets every field declared by an already resolved type.</summary>
     /// <param name="type">The resolved declaring type.</param>
     /// <returns>Every declared field.</returns>

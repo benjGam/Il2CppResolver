@@ -309,6 +309,19 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
         }
     }
 
+    /// <summary>Resolves a managed property through the active semantic backend.</summary>
+    /// <param name="query">The semantic property identity to resolve.</param>
+    /// <returns>The resolved IL2CPP property.</returns>
+    public ResolvedProperty ResolveProperty(PropertyQuery query)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ArgumentNullException.ThrowIfNull(query);
+            return _backend.ResolveProperty(query);
+        }
+    }
+
     /// <summary>Resolves a managed field through the active semantic backend.</summary>
     /// <param name="query">The semantic field identity to resolve.</param>
     /// <returns>The resolved IL2CPP field.</returns>
@@ -471,6 +484,57 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
             ArgumentException.ThrowIfNullOrWhiteSpace(methodName);
             ArgumentNullException.ThrowIfNull(parameterTypeNames);
             return _backend.ResolveMethod(new MethodQuery(type.Query, methodName, parameterTypeNames.ToArray()));
+        }
+    }
+
+    /// <summary>Enumerates every property declared by a resolved type after validating the originating cache generation.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>Every declared resolved property.</returns>
+    IReadOnlyList<ResolvedProperty> IResolutionNavigator.GetProperties(ResolvedType type, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            return _backend.GetProperties(type);
+        }
+    }
+
+    /// <summary>Enumerates every property with an exact property name after validating the originating cache generation.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="name">The exact managed property name.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>Every resolved property sharing the requested name.</returns>
+    IReadOnlyList<ResolvedProperty> IResolutionNavigator.GetProperties(ResolvedType type, string name, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            ArgumentException.ThrowIfNullOrWhiteSpace(name);
+            return _backend.GetProperties(type, name);
+        }
+    }
+
+    /// <summary>Resolves one exact property relative to a resolved declaring type after validating the originating cache generation.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="propertyName">The exact managed property name.</param>
+    /// <param name="indexParameterTypeNames">The ordered semantic index-parameter type names identifying the property.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>The unique resolved property matching the requested signature.</returns>
+    ResolvedProperty IResolutionNavigator.ResolveProperty(ResolvedType type, string propertyName, IReadOnlyList<string> indexParameterTypeNames, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
+            ArgumentNullException.ThrowIfNull(indexParameterTypeNames);
+            return _backend.ResolveProperty(new PropertyQuery(type.Query, propertyName, indexParameterTypeNames.ToArray()));
         }
     }
 

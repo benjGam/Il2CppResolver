@@ -159,6 +159,15 @@ public sealed class Il2CppResolver : IDisposable
         return _session.ResolveMethodCode(query, layout);
     }
 
+    /// <summary>Resolves a managed property from its declaring type, property name and ordered index-parameter type names.</summary>
+    /// <param name="query">The semantic property query to resolve.</param>
+    /// <returns>The resolved runtime property with optional identity-mapped getter and setter methods.</returns>
+    public ResolvedProperty ResolveProperty(PropertyQuery query)
+    {
+        ThrowIfDisposed();
+        return _session.ResolveProperty(query);
+    }
+
     /// <summary>Resolves a managed field from its declaring type and field name.</summary>
     /// <param name="query">The semantic field query to resolve.</param>
     /// <returns>The resolved runtime field and storage category.</returns>
