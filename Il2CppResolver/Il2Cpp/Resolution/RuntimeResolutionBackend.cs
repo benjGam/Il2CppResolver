@@ -118,6 +118,25 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
         return GetOrCreateType(query, assembly, classAddress);
     }
 
+    /// <summary>Materializes one runtime type directly from an already discovered native class identity while preserving assembly and public-object identity maps.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> identity to materialize.</param>
+    /// <returns>The identity-mapped resolved runtime type.</returns>
+    public ResolvedType ResolveTypeByClassAddress(nint classAddress)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class address cannot be zero.");
+
+        if (_cache.TryGetTypeByClassAddress(classAddress, out ResolvedType? existing))
+            return existing;
+
+        RuntimeClassInfo runtimeType = _catalog.GetTypeCatalog().GetClassInfo(classAddress);
+        RuntimeAssemblyInfo runtimeAssembly = _catalog.ResolveAssemblyByImageAddress(runtimeType.ImageAddress);
+        AssemblyQuery assemblyQuery = new(runtimeAssembly.Name);
+        ResolvedAssembly assembly = GetOrCreateAssembly(assemblyQuery, runtimeAssembly);
+        TypeQuery typeQuery = new(assembly.Name, runtimeType.Namespace, runtimeType.Name);
+        return GetOrCreateType(typeQuery, assembly, classAddress);
+    }
+
     /// <summary>Gets every method declared by an already resolved type and materializes complete semantic signatures.</summary>
     /// <param name="type">The resolved declaring type.</param>
     /// <returns>Every declared resolved method.</returns>
@@ -411,7 +430,7 @@ internal sealed class RuntimeResolutionBackend : IIl2CppResolutionBackend
         }
 
         GetFieldStorage(field, out FieldStorageKind storageKind, out nuint? instanceOffset, out nuint? staticStorageOffset);
-        ResolvedField result = new(query, declaringType, field.FieldAddress, field.TypeName, field.Attributes, storageKind, instanceOffset, staticStorageOffset, _binding, _binding.Generation);
+        ResolvedField result = new(query, declaringType, field.FieldAddress, field.TypeAddress, field.TypeName, field.Attributes, storageKind, instanceOffset, staticStorageOffset, _binding, _binding.Generation);
         _cache.StoreField(result);
         return result;
     }

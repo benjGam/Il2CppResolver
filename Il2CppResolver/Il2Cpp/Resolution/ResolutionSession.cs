@@ -7,6 +7,9 @@ using UnityIl2CppResolver.Il2Cpp.Queries;
 using UnityIl2CppResolver.Il2Cpp.Results;
 using UnityIl2CppResolver.Il2Cpp.Runtime;
 using UnityIl2CppResolver.Il2Cpp.Runtime.Catalog;
+using UnityIl2CppResolver.Il2Cpp.Values;
+using RuntimeClassMetadata = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppClassMetadata;
+using RuntimeMethodMetadata = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppMethodMetadata;
 using UnityIl2CppResolver.Native.Process;
 
 namespace UnityIl2CppResolver.Il2Cpp.Resolution;
@@ -44,6 +47,8 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
     private readonly Il2CppLayoutRegistry _layoutRegistry;
     /// <summary>Resolves static-field storage through optional public IL2CPP runtime APIs when available.</summary>
     private readonly Il2CppRuntimeStaticFieldStorageResolver _runtimeStaticFieldStorageResolver;
+    /// <summary>Reads validated scalar, enum and managed-reference field values from concrete target storage.</summary>
+    private readonly Il2CppFieldValueReader _fieldValueReader;
     /// <summary>Defines the maximum duration allowed for each individual remote IL2CPP runtime invocation.</summary>
     private readonly TimeSpan _callTimeout;
 
@@ -111,6 +116,7 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
         _binding = binding;
         _layoutRegistry = layoutRegistry;
         _runtimeStaticFieldStorageResolver = runtimeStaticFieldStorageResolver;
+        _fieldValueReader = new Il2CppFieldValueReader(target.Memory, runtimeCatalog.GetTypeCatalog());
         _callTimeout = callTimeout;
     }
 
@@ -570,6 +576,106 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
         }
     }
 
+    /// <summary>Gets the parent type of a resolved runtime type after validating the originating cache generation.</summary>
+    ResolvedType? IResolutionNavigator.GetBaseType(ResolvedType type, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            nint parentAddress = _runtimeCatalog.GetTypeCatalog().GetParent(type.ClassAddress);
+            return parentAddress == 0 ? null : _backend.ResolveTypeByClassAddress(parentAddress);
+        }
+    }
+
+    /// <summary>Gets every interface associated with a resolved runtime type after validating the originating cache generation.</summary>
+    IReadOnlyList<ResolvedType> IResolutionNavigator.GetInterfaces(ResolvedType type, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            IReadOnlyList<nint> addresses = _runtimeCatalog.GetTypeCatalog().GetInterfaces(type.ClassAddress);
+            List<ResolvedType> results = new(addresses.Count);
+
+            foreach (nint address in addresses)
+                results.Add(_backend.ResolveTypeByClassAddress(address));
+
+            return results.AsReadOnly();
+        }
+    }
+
+    /// <summary>Gets every nested type declared by a resolved runtime type after validating the originating cache generation.</summary>
+    IReadOnlyList<ResolvedType> IResolutionNavigator.GetNestedTypes(ResolvedType type, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            IReadOnlyList<nint> addresses = _runtimeCatalog.GetTypeCatalog().GetNestedTypes(type.ClassAddress);
+            List<ResolvedType> results = new(addresses.Count);
+
+            foreach (nint address in addresses)
+                results.Add(_backend.ResolveTypeByClassAddress(address));
+
+            return results.AsReadOnly();
+        }
+    }
+
+    /// <summary>Gets the declaring type of a nested resolved runtime type after validating the originating cache generation.</summary>
+    ResolvedType? IResolutionNavigator.GetDeclaringType(ResolvedType type, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            nint declaringAddress = _runtimeCatalog.GetTypeCatalog().GetDeclaringType(type.ClassAddress);
+            return declaringAddress == 0 ? null : _backend.ResolveTypeByClassAddress(declaringAddress);
+        }
+    }
+
+    /// <summary>Gets cached public type metadata after validating the originating cache generation.</summary>
+    ResolvedTypeMetadata IResolutionNavigator.GetTypeMetadata(ResolvedType type, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+
+            if (_cache.TryGetTypeMetadata(type.ClassAddress, out ResolvedTypeMetadata? cachedMetadata))
+                return cachedMetadata;
+
+            RuntimeClassMetadata metadata = _runtimeCatalog.GetTypeCatalog().GetClassMetadata(type.ClassAddress);
+            ResolvedTypeMetadata result = new(metadata.Attributes, metadata.MetadataToken, metadata.IsValueType, metadata.IsEnum, metadata.IsBlittable, metadata.IsGeneric, metadata.IsInflated, metadata.ValueSize, metadata.ValueAlignment);
+            _cache.StoreTypeMetadata(type.ClassAddress, result);
+            return result;
+        }
+    }
+
+    /// <summary>Gets cached public method metadata after validating the originating cache generation.</summary>
+    ResolvedMethodMetadata IResolutionNavigator.GetMethodMetadata(ResolvedMethod method, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(method);
+
+            if (_cache.TryGetMethodMetadata(method.MethodInfoAddress, out ResolvedMethodMetadata? cachedMetadata))
+                return cachedMetadata;
+
+            RuntimeMethodMetadata metadata = _runtimeCatalog.GetMethodMetadataCatalog().GetMetadata(method.MethodInfoAddress);
+            ResolvedMethodMetadata result = new(metadata.Attributes, metadata.ImplementationAttributes, metadata.MetadataToken, metadata.IsGeneric, metadata.IsInflated);
+            _cache.StoreMethodMetadata(method.MethodInfoAddress, result);
+            return result;
+        }
+    }
+
     /// <summary>Maps a resolved method to native code through the session's active MethodInfo layout policy after validating the originating cache generation.</summary>
     /// <param name="method">The resolved method to map.</param>
     /// <param name="generation">The cache generation that produced <paramref name="method"/>.</param>
@@ -632,6 +738,123 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
             ArgumentNullException.ThrowIfNull(field);
             ArgumentNullException.ThrowIfNull(layout);
             return ResolveFieldStorageCore(field, layout);
+        }
+    }
+
+    /// <summary>Reads a supported scalar from a normal static field through the session's active field-storage policy after validating the originating cache generation.</summary>
+    T IResolutionNavigator.ReadStaticField<T>(ResolvedField field, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ResolvedFieldStorage storage = ResolveFieldStorageDefaultCore(field);
+            return _fieldValueReader.ReadStatic<T>(field, storage);
+        }
+    }
+
+    /// <summary>Reads a supported scalar from a normal static field through one explicit Il2CppClass layout override after validating the originating cache generation.</summary>
+    T IResolutionNavigator.ReadStaticField<T>(ResolvedField field, Il2CppClassLayout layout, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ArgumentNullException.ThrowIfNull(layout);
+            ResolvedFieldStorage storage = ResolveFieldStorageCore(field, layout);
+            return _fieldValueReader.ReadStatic<T>(field, storage);
+        }
+    }
+
+    /// <summary>Reads a managed reference from a normal static field through the session's active field-storage policy after validating the originating cache generation.</summary>
+    nint IResolutionNavigator.ReadStaticFieldReference(ResolvedField field, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ResolvedFieldStorage storage = ResolveFieldStorageDefaultCore(field);
+            return _fieldValueReader.ReadStaticReference(field, storage);
+        }
+    }
+
+    /// <summary>Reads a managed reference from a normal static field through one explicit Il2CppClass layout override after validating the originating cache generation.</summary>
+    nint IResolutionNavigator.ReadStaticFieldReference(ResolvedField field, Il2CppClassLayout layout, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ArgumentNullException.ThrowIfNull(layout);
+            ResolvedFieldStorage storage = ResolveFieldStorageCore(field, layout);
+            return _fieldValueReader.ReadStaticReference(field, storage);
+        }
+    }
+
+    /// <summary>Reads an enum from a normal static field through the session's active field-storage policy after validating the originating cache generation.</summary>
+    TEnum IResolutionNavigator.ReadStaticFieldEnum<TEnum>(ResolvedField field, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ResolvedFieldStorage storage = ResolveFieldStorageDefaultCore(field);
+            return _fieldValueReader.ReadStaticEnum<TEnum>(field, storage);
+        }
+    }
+
+    /// <summary>Reads an enum from a normal static field through one explicit Il2CppClass layout override after validating the originating cache generation.</summary>
+    TEnum IResolutionNavigator.ReadStaticFieldEnum<TEnum>(ResolvedField field, Il2CppClassLayout layout, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ArgumentNullException.ThrowIfNull(layout);
+            ResolvedFieldStorage storage = ResolveFieldStorageCore(field, layout);
+            return _fieldValueReader.ReadStaticEnum<TEnum>(field, storage);
+        }
+    }
+
+    /// <summary>Reads a supported scalar from an instance field relative to the specified remote IL2CPP object after validating the originating cache generation.</summary>
+    T IResolutionNavigator.ReadInstanceField<T>(ResolvedField field, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            return _fieldValueReader.ReadInstance<T>(field, instanceAddress);
+        }
+    }
+
+    /// <summary>Reads a managed reference from an instance field relative to the specified remote IL2CPP object after validating the originating cache generation.</summary>
+    nint IResolutionNavigator.ReadInstanceFieldReference(ResolvedField field, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            return _fieldValueReader.ReadInstanceReference(field, instanceAddress);
+        }
+    }
+
+    /// <summary>Reads an enum from an instance field relative to the specified remote IL2CPP object after validating the originating cache generation.</summary>
+    TEnum IResolutionNavigator.ReadInstanceFieldEnum<TEnum>(ResolvedField field, nint instanceAddress, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            return _fieldValueReader.ReadInstanceEnum<TEnum>(field, instanceAddress);
         }
     }
 

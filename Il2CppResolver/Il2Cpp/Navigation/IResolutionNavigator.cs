@@ -4,7 +4,7 @@ using UnityIl2CppResolver.Il2Cpp.Results;
 namespace UnityIl2CppResolver.Il2Cpp.Navigation;
 
 /// <summary>
-/// Defines the internal navigation contract used by resolved public entities to continue semantic traversal through the session that created them.
+/// Defines the internal navigation contract used by resolved public entities to continue semantic traversal, metadata inspection and validated value reading through the session that created them.
 /// Every operation carries the originating cache generation so stale runtime pointers are rejected after session invalidation.
 /// </summary>
 internal interface IResolutionNavigator
@@ -78,6 +78,42 @@ internal interface IResolutionNavigator
     /// <returns>The unique resolved field matching the requested name.</returns>
     ResolvedField ResolveField(ResolvedType type, string fieldName, long generation);
 
+    /// <summary>Gets the parent type of the specified resolved type.</summary>
+    /// <param name="type">The resolved type whose parent should be retrieved.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>The identity-mapped parent type, or <see langword="null"/> for a runtime root type.</returns>
+    ResolvedType? GetBaseType(ResolvedType type, long generation);
+
+    /// <summary>Gets every interface reported by IL2CPP for the specified resolved type.</summary>
+    /// <param name="type">The resolved type whose interfaces should be enumerated.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>The identity-mapped interface types.</returns>
+    IReadOnlyList<ResolvedType> GetInterfaces(ResolvedType type, long generation);
+
+    /// <summary>Gets every nested type declared by the specified resolved type.</summary>
+    /// <param name="type">The resolved type whose nested types should be enumerated.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>The identity-mapped nested types.</returns>
+    IReadOnlyList<ResolvedType> GetNestedTypes(ResolvedType type, long generation);
+
+    /// <summary>Gets the declaring type of a nested resolved type.</summary>
+    /// <param name="type">The resolved type whose declaring type should be retrieved.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>The identity-mapped declaring type, or <see langword="null"/> for a top-level type.</returns>
+    ResolvedType? GetDeclaringType(ResolvedType type, long generation);
+
+    /// <summary>Gets the cached public metadata snapshot associated with the specified resolved type.</summary>
+    /// <param name="type">The resolved type whose metadata should be inspected.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>The immutable type metadata snapshot.</returns>
+    ResolvedTypeMetadata GetTypeMetadata(ResolvedType type, long generation);
+
+    /// <summary>Gets the cached public metadata snapshot associated with the specified resolved method.</summary>
+    /// <param name="method">The resolved method whose metadata should be inspected.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="method"/>.</param>
+    /// <returns>The immutable method metadata snapshot.</returns>
+    ResolvedMethodMetadata GetMethodMetadata(ResolvedMethod method, long generation);
+
     /// <summary>Maps an already resolved method to native code using the session's active layout-selection policy.</summary>
     /// <param name="method">The resolved method to map.</param>
     /// <param name="generation">The cache generation that produced <paramref name="method"/>.</param>
@@ -103,4 +139,70 @@ internal interface IResolutionNavigator
     /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
     /// <returns>The validated concrete static-field storage mapping.</returns>
     ResolvedFieldStorage ResolveFieldStorage(ResolvedField field, Il2CppClassLayout layout, long generation);
+
+    /// <summary>Reads a supported scalar from a normal static field using the session's active storage-selection policy.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar type expected by the field.</typeparam>
+    /// <param name="field">The resolved normal static field.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The validated scalar value.</returns>
+    T ReadStaticField<T>(ResolvedField field, long generation) where T : unmanaged;
+
+    /// <summary>Reads a supported scalar from a normal static field using one explicit class-layout override.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar type expected by the field.</typeparam>
+    /// <param name="field">The resolved normal static field.</param>
+    /// <param name="layout">The one-shot Il2CppClass structural layout.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The validated scalar value.</returns>
+    T ReadStaticField<T>(ResolvedField field, Il2CppClassLayout layout, long generation) where T : unmanaged;
+
+    /// <summary>Reads a managed reference from a normal static field using the session's active storage-selection policy.</summary>
+    /// <param name="field">The resolved normal static reference field.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The remote <c>Il2CppObject*</c> address, or zero for a null reference.</returns>
+    nint ReadStaticFieldReference(ResolvedField field, long generation);
+
+    /// <summary>Reads a managed reference from a normal static field using one explicit class-layout override.</summary>
+    /// <param name="field">The resolved normal static reference field.</param>
+    /// <param name="layout">The one-shot Il2CppClass structural layout.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The remote <c>Il2CppObject*</c> address, or zero for a null reference.</returns>
+    nint ReadStaticFieldReference(ResolvedField field, Il2CppClassLayout layout, long generation);
+
+    /// <summary>Reads an enum from a normal static field using the session's active storage-selection policy.</summary>
+    /// <typeparam name="TEnum">The exact managed enum type matching the IL2CPP field.</typeparam>
+    /// <param name="field">The resolved normal static enum field.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The validated enum value.</returns>
+    TEnum ReadStaticFieldEnum<TEnum>(ResolvedField field, long generation) where TEnum : unmanaged, Enum;
+
+    /// <summary>Reads an enum from a normal static field using one explicit class-layout override.</summary>
+    /// <typeparam name="TEnum">The exact managed enum type matching the IL2CPP field.</typeparam>
+    /// <param name="field">The resolved normal static enum field.</param>
+    /// <param name="layout">The one-shot Il2CppClass structural layout.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The validated enum value.</returns>
+    TEnum ReadStaticFieldEnum<TEnum>(ResolvedField field, Il2CppClassLayout layout, long generation) where TEnum : unmanaged, Enum;
+
+    /// <summary>Reads a supported scalar from an instance field relative to one remote IL2CPP object.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar type expected by the field.</typeparam>
+    /// <param name="field">The resolved instance field.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> address containing the field.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The validated scalar value.</returns>
+    T ReadInstanceField<T>(ResolvedField field, nint instanceAddress, long generation) where T : unmanaged;
+
+    /// <summary>Reads a managed reference from an instance field relative to one remote IL2CPP object.</summary>
+    /// <param name="field">The resolved instance reference field.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> address containing the field.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The referenced remote <c>Il2CppObject*</c> address, or zero for a null reference.</returns>
+    nint ReadInstanceFieldReference(ResolvedField field, nint instanceAddress, long generation);
+
+    /// <summary>Reads an enum from an instance field relative to one remote IL2CPP object.</summary>
+    /// <typeparam name="TEnum">The exact managed enum type matching the IL2CPP field.</typeparam>
+    /// <param name="field">The resolved instance enum field.</param>
+    /// <param name="instanceAddress">The remote <c>Il2CppObject*</c> address containing the field.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The validated enum value.</returns>
+    TEnum ReadInstanceFieldEnum<TEnum>(ResolvedField field, nint instanceAddress, long generation) where TEnum : unmanaged, Enum;
 }

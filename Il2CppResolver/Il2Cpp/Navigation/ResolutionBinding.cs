@@ -106,6 +106,42 @@ internal sealed class ResolutionBinding : IResolutionNavigator
     /// <returns>The unique resolved field matching the requested name.</returns>
     public ResolvedField ResolveField(ResolvedType type, string fieldName, long generation) => GetNavigator().ResolveField(type, fieldName, generation);
 
+    /// <summary>Forwards parent-type navigation to the attached session navigator.</summary>
+    /// <param name="type">The resolved type whose parent should be retrieved.</param>
+    /// <param name="generation">The cache generation that produced the type.</param>
+    /// <returns>The resolved parent type, or <see langword="null"/>.</returns>
+    public ResolvedType? GetBaseType(ResolvedType type, long generation) => GetNavigator().GetBaseType(type, generation);
+
+    /// <summary>Forwards interface navigation to the attached session navigator.</summary>
+    /// <param name="type">The resolved type whose interfaces should be enumerated.</param>
+    /// <param name="generation">The cache generation that produced the type.</param>
+    /// <returns>The resolved interface types.</returns>
+    public IReadOnlyList<ResolvedType> GetInterfaces(ResolvedType type, long generation) => GetNavigator().GetInterfaces(type, generation);
+
+    /// <summary>Forwards nested-type navigation to the attached session navigator.</summary>
+    /// <param name="type">The resolved type whose nested types should be enumerated.</param>
+    /// <param name="generation">The cache generation that produced the type.</param>
+    /// <returns>The resolved nested types.</returns>
+    public IReadOnlyList<ResolvedType> GetNestedTypes(ResolvedType type, long generation) => GetNavigator().GetNestedTypes(type, generation);
+
+    /// <summary>Forwards declaring-type navigation to the attached session navigator.</summary>
+    /// <param name="type">The resolved type whose declaring type should be retrieved.</param>
+    /// <param name="generation">The cache generation that produced the type.</param>
+    /// <returns>The resolved declaring type, or <see langword="null"/>.</returns>
+    public ResolvedType? GetDeclaringType(ResolvedType type, long generation) => GetNavigator().GetDeclaringType(type, generation);
+
+    /// <summary>Forwards type metadata inspection to the attached session navigator.</summary>
+    /// <param name="type">The resolved type whose metadata should be inspected.</param>
+    /// <param name="generation">The cache generation that produced the type.</param>
+    /// <returns>The immutable type metadata snapshot.</returns>
+    public ResolvedTypeMetadata GetTypeMetadata(ResolvedType type, long generation) => GetNavigator().GetTypeMetadata(type, generation);
+
+    /// <summary>Forwards method metadata inspection to the attached session navigator.</summary>
+    /// <param name="method">The resolved method whose metadata should be inspected.</param>
+    /// <param name="generation">The cache generation that produced the method.</param>
+    /// <returns>The immutable method metadata snapshot.</returns>
+    public ResolvedMethodMetadata GetMethodMetadata(ResolvedMethod method, long generation) => GetNavigator().GetMethodMetadata(method, generation);
+
     /// <summary>Forwards native method-code mapping through the session's active MethodInfo layout policy.</summary>
     /// <param name="method">The resolved method to map.</param>
     /// <param name="generation">The cache generation that produced the method.</param>
@@ -131,6 +167,72 @@ internal sealed class ResolutionBinding : IResolutionNavigator
     /// <param name="generation">The cache generation that produced the field.</param>
     /// <returns>The validated concrete static-field storage mapping.</returns>
     public ResolvedFieldStorage ResolveFieldStorage(ResolvedField field, Il2CppClassLayout layout, long generation) => GetNavigator().ResolveFieldStorage(field, layout, generation);
+
+    /// <summary>Forwards a scalar normal-static field read through the active storage-selection policy.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar type.</typeparam>
+    /// <param name="field">The resolved normal static field.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated scalar value.</returns>
+    public T ReadStaticField<T>(ResolvedField field, long generation) where T : unmanaged => GetNavigator().ReadStaticField<T>(field, generation);
+
+    /// <summary>Forwards a scalar normal-static field read through one explicit class-layout override.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar type.</typeparam>
+    /// <param name="field">The resolved normal static field.</param>
+    /// <param name="layout">The one-shot class layout override.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated scalar value.</returns>
+    public T ReadStaticField<T>(ResolvedField field, Il2CppClassLayout layout, long generation) where T : unmanaged => GetNavigator().ReadStaticField<T>(field, layout, generation);
+
+    /// <summary>Forwards a managed-reference normal-static field read through the active storage-selection policy.</summary>
+    /// <param name="field">The resolved normal static reference field.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The remote referenced object address, or zero.</returns>
+    public nint ReadStaticFieldReference(ResolvedField field, long generation) => GetNavigator().ReadStaticFieldReference(field, generation);
+
+    /// <summary>Forwards a managed-reference normal-static field read through one explicit class-layout override.</summary>
+    /// <param name="field">The resolved normal static reference field.</param>
+    /// <param name="layout">The one-shot class layout override.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The remote referenced object address, or zero.</returns>
+    public nint ReadStaticFieldReference(ResolvedField field, Il2CppClassLayout layout, long generation) => GetNavigator().ReadStaticFieldReference(field, layout, generation);
+
+    /// <summary>Forwards an enum normal-static field read through the active storage-selection policy.</summary>
+    /// <typeparam name="TEnum">The exact managed enum type.</typeparam>
+    /// <param name="field">The resolved normal static enum field.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated enum value.</returns>
+    public TEnum ReadStaticFieldEnum<TEnum>(ResolvedField field, long generation) where TEnum : unmanaged, Enum => GetNavigator().ReadStaticFieldEnum<TEnum>(field, generation);
+
+    /// <summary>Forwards an enum normal-static field read through one explicit class-layout override.</summary>
+    /// <typeparam name="TEnum">The exact managed enum type.</typeparam>
+    /// <param name="field">The resolved normal static enum field.</param>
+    /// <param name="layout">The one-shot class layout override.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated enum value.</returns>
+    public TEnum ReadStaticFieldEnum<TEnum>(ResolvedField field, Il2CppClassLayout layout, long generation) where TEnum : unmanaged, Enum => GetNavigator().ReadStaticFieldEnum<TEnum>(field, layout, generation);
+
+    /// <summary>Forwards a scalar instance field read.</summary>
+    /// <typeparam name="T">The exact supported unmanaged scalar type.</typeparam>
+    /// <param name="field">The resolved instance field.</param>
+    /// <param name="instanceAddress">The remote object base address.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated scalar value.</returns>
+    public T ReadInstanceField<T>(ResolvedField field, nint instanceAddress, long generation) where T : unmanaged => GetNavigator().ReadInstanceField<T>(field, instanceAddress, generation);
+
+    /// <summary>Forwards a managed-reference instance field read.</summary>
+    /// <param name="field">The resolved instance reference field.</param>
+    /// <param name="instanceAddress">The remote object base address.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The remote referenced object address, or zero.</returns>
+    public nint ReadInstanceFieldReference(ResolvedField field, nint instanceAddress, long generation) => GetNavigator().ReadInstanceFieldReference(field, instanceAddress, generation);
+
+    /// <summary>Forwards an enum instance field read.</summary>
+    /// <typeparam name="TEnum">The exact managed enum type.</typeparam>
+    /// <param name="field">The resolved instance enum field.</param>
+    /// <param name="instanceAddress">The remote object base address.</param>
+    /// <param name="generation">The cache generation that produced the field.</param>
+    /// <returns>The validated enum value.</returns>
+    public TEnum ReadInstanceFieldEnum<TEnum>(ResolvedField field, nint instanceAddress, long generation) where TEnum : unmanaged, Enum => GetNavigator().ReadInstanceFieldEnum<TEnum>(field, instanceAddress, generation);
 
     /// <summary>Gets the attached navigator or rejects navigation before session construction has completed.</summary>
     /// <returns>The fully initialized session navigator.</returns>

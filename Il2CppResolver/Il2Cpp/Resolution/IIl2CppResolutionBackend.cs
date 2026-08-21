@@ -28,6 +28,11 @@ internal interface IIl2CppResolutionBackend
     /// <returns>The resolved runtime type.</returns>
     ResolvedType ResolveType(TypeQuery query);
 
+    /// <summary>Materializes one runtime type directly from an already discovered native class identity.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> identity to materialize.</param>
+    /// <returns>The identity-mapped resolved runtime type.</returns>
+    ResolvedType ResolveTypeByClassAddress(nint classAddress);
+
     /// <summary>Gets every method declared by an already resolved type.</summary>
     /// <param name="type">The resolved declaring type.</param>
     /// <returns>Every declared method with complete semantic signatures.</returns>

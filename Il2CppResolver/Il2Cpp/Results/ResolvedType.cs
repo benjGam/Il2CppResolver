@@ -110,6 +110,41 @@ public sealed class ResolvedType
         return _navigator.ResolveProperty(this, propertyName, Array.AsReadOnly(indexParameterTypeNames.ToArray()), _generation);
     }
 
+    /// <summary>Gets the parent type of this runtime type, or <see langword="null"/> when this type has no parent.</summary>
+    /// <returns>The identity-mapped resolved parent type, or <see langword="null"/> for a root type.</returns>
+    public ResolvedType? GetBaseType()
+    {
+        return _navigator.GetBaseType(this, _generation);
+    }
+
+    /// <summary>Gets every interface reported by IL2CPP for this runtime type.</summary>
+    /// <returns>The identity-mapped interface types.</returns>
+    public IReadOnlyList<ResolvedType> GetInterfaces()
+    {
+        return _navigator.GetInterfaces(this, _generation);
+    }
+
+    /// <summary>Gets every nested type declared by this runtime type.</summary>
+    /// <returns>The identity-mapped nested runtime types.</returns>
+    public IReadOnlyList<ResolvedType> GetNestedTypes()
+    {
+        return _navigator.GetNestedTypes(this, _generation);
+    }
+
+    /// <summary>Gets the declaring type of this nested runtime type, or <see langword="null"/> when this is a top-level type.</summary>
+    /// <returns>The identity-mapped declaring type, or <see langword="null"/>.</returns>
+    public ResolvedType? GetDeclaringType()
+    {
+        return _navigator.GetDeclaringType(this, _generation);
+    }
+
+    /// <summary>Gets the cached metadata snapshot associated with this runtime type.</summary>
+    /// <returns>The immutable public type metadata snapshot.</returns>
+    public ResolvedTypeMetadata GetMetadata()
+    {
+        return _navigator.GetTypeMetadata(this, _generation);
+    }
+
     /// <summary>Enumerates every field declared by this runtime type.</summary>
     /// <returns>All declared fields together with semantic type and storage metadata.</returns>
     public IReadOnlyList<ResolvedField> GetFields()

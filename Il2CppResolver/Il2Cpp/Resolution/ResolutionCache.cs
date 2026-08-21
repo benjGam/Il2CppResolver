@@ -31,6 +31,10 @@ internal sealed class ResolutionCache
     private readonly Dictionary<nint, ResolvedField> _fieldsByAddress = new();
     /// <summary>Stores resolved properties indexed by native <c>PropertyInfo*</c> identity so property enumeration and targeted resolution share one public object.</summary>
     private readonly Dictionary<nint, ResolvedProperty> _propertiesByAddress = new();
+    /// <summary>Stores public type metadata snapshots indexed by native <c>Il2CppClass*</c> identity.</summary>
+    private readonly Dictionary<nint, ResolvedTypeMetadata> _typeMetadataByClassAddress = new();
+    /// <summary>Stores public method metadata snapshots indexed by native <c>MethodInfo*</c> identity.</summary>
+    private readonly Dictionary<nint, ResolvedMethodMetadata> _methodMetadataByAddress = new();
 
     /// <summary>
     /// Identifies one native method-code mapping by runtime method identity and exact structural profile evidence.
@@ -175,6 +179,54 @@ internal sealed class ResolutionCache
             throw new ArgumentOutOfRangeException(nameof(methodInfoAddress), "The IL2CPP MethodInfo address cannot be zero.");
 
         return _methodsByAddress.TryGetValue(methodInfoAddress, out method);
+    }
+
+    /// <summary>Attempts to retrieve cached public type metadata for one native class identity.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> address.</param>
+    /// <param name="metadata">Receives the cached metadata snapshot when available.</param>
+    /// <returns><see langword="true"/> when the metadata has already been materialized.</returns>
+    public bool TryGetTypeMetadata(nint classAddress, out ResolvedTypeMetadata? metadata)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class address cannot be zero.");
+
+        return _typeMetadataByClassAddress.TryGetValue(classAddress, out metadata);
+    }
+
+    /// <summary>Stores one public type metadata snapshot by native class identity.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> address.</param>
+    /// <param name="metadata">The immutable metadata snapshot to cache.</param>
+    public void StoreTypeMetadata(nint classAddress, ResolvedTypeMetadata metadata)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class address cannot be zero.");
+
+        ArgumentNullException.ThrowIfNull(metadata);
+        _typeMetadataByClassAddress[classAddress] = metadata;
+    }
+
+    /// <summary>Attempts to retrieve cached public method metadata for one native method identity.</summary>
+    /// <param name="methodAddress">The native <c>MethodInfo*</c> address.</param>
+    /// <param name="metadata">Receives the cached metadata snapshot when available.</param>
+    /// <returns><see langword="true"/> when the metadata has already been materialized.</returns>
+    public bool TryGetMethodMetadata(nint methodAddress, out ResolvedMethodMetadata? metadata)
+    {
+        if (methodAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(methodAddress), "The IL2CPP MethodInfo address cannot be zero.");
+
+        return _methodMetadataByAddress.TryGetValue(methodAddress, out metadata);
+    }
+
+    /// <summary>Stores one public method metadata snapshot by native method identity.</summary>
+    /// <param name="methodAddress">The native <c>MethodInfo*</c> address.</param>
+    /// <param name="metadata">The immutable metadata snapshot to cache.</param>
+    public void StoreMethodMetadata(nint methodAddress, ResolvedMethodMetadata metadata)
+    {
+        if (methodAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(methodAddress), "The IL2CPP MethodInfo address cannot be zero.");
+
+        ArgumentNullException.ThrowIfNull(metadata);
+        _methodMetadataByAddress[methodAddress] = metadata;
     }
 
     /// <summary>Attempts to retrieve native method code produced with the exact requested layout.</summary>
@@ -342,6 +394,8 @@ internal sealed class ResolutionCache
         _methodsByAddress.Clear();
         _fieldsByAddress.Clear();
         _propertiesByAddress.Clear();
+        _typeMetadataByClassAddress.Clear();
+        _methodMetadataByAddress.Clear();
         _methodCodes.Clear();
         _fieldStorages.Clear();
         _runtimeFieldStorages.Clear();

@@ -54,6 +54,13 @@ public sealed class ResolvedMethod
         _generation = generation;
     }
 
+    /// <summary>Gets the cached metadata snapshot associated with this runtime method.</summary>
+    /// <returns>The immutable public method metadata snapshot.</returns>
+    public ResolvedMethodMetadata GetMetadata()
+    {
+        return _navigator.GetMethodMetadata(this, _generation);
+    }
+
     /// <summary>Maps this method to validated direct native code using the MethodInfo layout selected or automatically detected by the owning session.</summary>
     /// <returns>The validated native method-code mapping.</returns>
     public ResolvedMethodCode ResolveCode()
