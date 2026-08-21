@@ -1395,11 +1395,11 @@ internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
             throw new InvalidOperationException("The resolved entity belongs to an invalidated resolver generation. Resolve the entity again before navigating from it.");
     }
 
-    /// <summary>Ensures the target exposes the complete conservative property-getter invocation capability before managed execution is attempted.</summary>
+    /// <summary>Ensures the target exposes the base conservative property-getter invocation capability before managed execution is attempted.</summary>
     private void EnsureGetterInvocationCapability()
     {
         if (!_runtime.Capabilities.CanInvokePropertyGetters)
-            throw new NotSupportedException("The target IL2CPP runtime does not expose the complete property-getter invocation capability required for thread attachment, runtime invocation, object validation, virtual dispatch and boxed-value unboxing.");
+            throw new NotSupportedException("The target IL2CPP runtime does not expose the property-getter invocation capability required for thread attachment, runtime invocation, object validation, virtual dispatch, result rooting and boxed-value unboxing.");
     }
 
     /// <summary>Throws when an operation is attempted after the session has released its target process.</summary>

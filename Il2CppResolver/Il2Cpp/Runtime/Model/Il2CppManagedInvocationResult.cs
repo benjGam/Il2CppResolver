@@ -3,13 +3,14 @@ namespace UnityIl2CppResolver.Il2Cpp.Runtime.Model;
 /// <summary>
 /// Describes the rooted managed result of one completed <c>il2cpp_runtime_invoke</c> call.
 /// The return object may be zero for a null managed reference, while a non-zero exception address indicates that managed execution raised an exception; every non-null return object is retained by the accompanying strong GC handle until the caller explicitly releases or transfers that root.
+/// The exception address is diagnostic-only and is not itself retained by a GC handle after the attached invocation thread returns.
 /// </summary>
 internal sealed record Il2CppManagedInvocationResult
 {
     /// <summary>Gets the returned managed <c>Il2CppObject*</c>, or zero.</summary>
     public nint ReturnObjectAddress { get; }
 
-    /// <summary>Gets the managed <c>Il2CppException*</c>, or zero when invocation completed without a managed exception.</summary>
+    /// <summary>Gets the diagnostic managed <c>Il2CppException*</c>, or zero when invocation completed without a managed exception. This address is not rooted for later dereferencing.</summary>
     public nint ExceptionAddress { get; }
 
     /// <summary>Gets the opaque pointer-sized strong IL2CPP GC handle retaining the returned managed object, or zero for a null result.</summary>

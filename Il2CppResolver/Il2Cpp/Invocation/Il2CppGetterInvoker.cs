@@ -6,13 +6,14 @@ using UnityIl2CppResolver.Il2Cpp.Values;
 using UnityIl2CppResolver.Native.Memory;
 using RuntimeClassMetadata = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppClassMetadata;
 using RuntimeManagedInvocationResult = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppManagedInvocationResult;
+using RuntimeObjectRoot = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppObjectRoot;
 using RuntimeTypeDescriptor = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppTypeDescriptor;
 
 namespace UnityIl2CppResolver.Il2Cpp.Invocation;
 
 /// <summary>
 /// Executes parameterless IL2CPP property getters through <c>il2cpp_runtime_invoke</c> and converts their managed results through the resolver's existing validated value-reading infrastructure.
-/// Instance invocation validates object readability, runtime class assignability and virtual dispatch before managed execution; value-type instances, indexers, setters and arbitrary method arguments remain intentionally outside this layer.
+/// Instance invocation protects caller-supplied objects with temporary strong GC handles before runtime class validation and virtual dispatch; value-type instances, indexers, setters and arbitrary method arguments remain intentionally outside this layer.
 /// </summary>
 internal sealed class Il2CppGetterInvoker
 {
@@ -71,16 +72,21 @@ internal sealed class Il2CppGetterInvoker
         RuntimeTypeDescriptor descriptor = GetReturnType(property);
         int size = FieldValueTypeValidator.ValidateScalar<T>(descriptor);
         RuntimeManagedInvocationResult result = Invoke(property, instanceAddress, requireStatic);
+        T value;
 
         try
         {
             nint valueAddress = UnboxRequired(property, result.ReturnObjectAddress, size);
-            return _memory.Read<T>(valueAddress);
+            value = _memory.Read<T>(valueAddress);
         }
-        finally
+        catch
         {
-            ReleaseResult(result);
+            TryReleaseResult(result);
+            throw;
         }
+
+        ReleaseResult(result);
+        return value;
     }
 
     /// <summary>Invokes one getter and reads its boxed return as the exact managed enum type.</summary>
@@ -94,16 +100,21 @@ internal sealed class Il2CppGetterInvoker
         RuntimeTypeDescriptor descriptor = GetReturnType(property);
         int size = FieldValueTypeValidator.ValidateEnum<TEnum>(descriptor);
         RuntimeManagedInvocationResult result = Invoke(property, instanceAddress, requireStatic);
+        TEnum value;
 
         try
         {
             nint valueAddress = UnboxRequired(property, result.ReturnObjectAddress, size);
-            return _memory.Read<TEnum>(valueAddress);
+            value = _memory.Read<TEnum>(valueAddress);
         }
-        finally
+        catch
         {
-            ReleaseResult(result);
+            TryReleaseResult(result);
+            throw;
         }
+
+        ReleaseResult(result);
+        return value;
     }
 
     /// <summary>Invokes one getter and returns its managed-reference result without dereferencing the object.</summary>
@@ -115,8 +126,17 @@ internal sealed class Il2CppGetterInvoker
     {
         FieldValueTypeValidator.ValidateManagedReference(GetReturnType(property));
         RuntimeManagedInvocationResult result = Invoke(property, instanceAddress, requireStatic);
-        RetainResult(result);
-        return result.ReturnObjectAddress;
+
+        try
+        {
+            RetainResult(result);
+            return result.ReturnObjectAddress;
+        }
+        catch
+        {
+            TryReleaseResult(result);
+            throw;
+        }
     }
 
     /// <summary>Invokes one getter and decodes its <c>System.String</c> return value.</summary>
@@ -128,15 +148,20 @@ internal sealed class Il2CppGetterInvoker
     {
         FieldValueTypeValidator.ValidateString(GetReturnType(property));
         RuntimeManagedInvocationResult result = Invoke(property, instanceAddress, requireStatic);
+        string? value;
 
         try
         {
-            return _strings.Read(result.ReturnObjectAddress);
+            value = _strings.Read(result.ReturnObjectAddress);
         }
-        finally
+        catch
         {
-            ReleaseResult(result);
+            TryReleaseResult(result);
+            throw;
         }
+
+        ReleaseResult(result);
+        return value;
     }
 
     /// <summary>Invokes one getter and materializes its single-dimensional zero-based managed array return value.</summary>
@@ -187,16 +212,21 @@ internal sealed class Il2CppGetterInvoker
         RuntimeClassMetadata metadata = _types.GetClassMetadata(descriptor.ClassAddress);
         int size = FieldValueTypeValidator.ValidateBlittable<T>(descriptor, metadata);
         RuntimeManagedInvocationResult result = Invoke(property, instanceAddress, requireStatic);
+        T value;
 
         try
         {
             nint valueAddress = UnboxRequired(property, result.ReturnObjectAddress, size);
-            return _memory.Read<T>(valueAddress);
+            value = _memory.Read<T>(valueAddress);
         }
-        finally
+        catch
         {
-            ReleaseResult(result);
+            TryReleaseResult(result);
+            throw;
         }
+
+        ReleaseResult(result);
+        return value;
     }
 
     /// <summary>Gets the validated return type descriptor of one readable parameterless property getter.</summary>
@@ -260,25 +290,103 @@ internal sealed class Il2CppGetterInvoker
         if (!requireStatic && !isInstance)
             throw new InvalidOperationException($"Property '{property.Query.Name}' uses a static getter and cannot be read through an instance-property API.");
 
-        nint invocationMethod = getter.MethodInfoAddress;
-
         if (isInstance)
-        {
-            ValidateInstance(property, instanceAddress);
-            invocationMethod = _runtime.GetVirtualMethod(instanceAddress, getter.MethodInfoAddress, _callTimeout);
-        }
-        else if (instanceAddress != 0)
+            return InvokeInstance(property, getter, instanceAddress, _runtimeCatalog.GetDomainAddress());
+
+        if (instanceAddress != 0)
             throw new InvalidOperationException("Static getter invocation must not supply a managed instance.");
 
-        RuntimeManagedInvocationResult result = _runtime.InvokeParameterlessMethod(_runtimeCatalog.GetDomainAddress(), invocationMethod, isInstance ? instanceAddress : 0, _callTimeout);
+        return InvokeManagedGetter(property, _runtimeCatalog.GetDomainAddress(), getter.MethodInfoAddress, 0);
+    }
 
+    /// <summary>Invokes one instance getter while a temporary strong GC handle protects the supplied managed object through validation, virtual dispatch and managed execution.</summary>
+    /// <param name="property">The readable instance property.</param>
+    /// <param name="getter">The declared parameterless getter.</param>
+    /// <param name="instanceAddress">The caller-supplied managed instance address.</param>
+    /// <param name="domainAddress">The active runtime domain resolved before the temporary instance root is created.</param>
+    /// <returns>The rooted managed invocation result.</returns>
+    private RuntimeManagedInvocationResult InvokeInstance(ResolvedProperty property, ResolvedMethod getter, nint instanceAddress, nint domainAddress)
+    {
+        RuntimeObjectRoot instanceRoot = RootInstance(property, instanceAddress);
+        nint invocationMethod;
+
+        try
+        {
+            invocationMethod = _runtime.GetVirtualMethod(instanceRoot.ObjectAddress, getter.MethodInfoAddress, _callTimeout);
+        }
+        catch (InvalidDataException)
+        {
+            // A null virtual result is reported only after the object-sensitive remote call completed, so the temporary root can be released safely.
+            TryReleaseObjectRoot(instanceRoot);
+            throw;
+        }
+        catch
+        {
+            // Remote-thread completion may be unknown, so the temporary root is deliberately abandoned rather than released while that thread may still depend on it.
+            throw;
+        }
+
+        // If remote invocation fails before thread termination can be proven, the instance root is intentionally abandoned because the target thread may still depend on it.
+        RuntimeManagedInvocationResult result = _runtime.InvokeParameterlessMethod(domainAddress, invocationMethod, instanceRoot.ObjectAddress, _callTimeout);
+
+        try
+        {
+            ThrowIfManagedException(property, result);
+        }
+        catch
+        {
+            TryReleaseObjectRoot(instanceRoot);
+            throw;
+        }
+
+        try
+        {
+            ReleaseObjectRoot(instanceRoot);
+        }
+        catch
+        {
+            TryReleaseResult(result);
+            throw;
+        }
+
+        return result;
+    }
+
+    /// <summary>Executes one already validated concrete getter and converts a reported managed exception into the public invocation exception.</summary>
+    /// <param name="property">The property used for diagnostic identity.</param>
+    /// <param name="domainAddress">The active runtime domain.</param>
+    /// <param name="methodAddress">The concrete parameterless <c>MethodInfo*</c>.</param>
+    /// <param name="instanceAddress">The protected managed instance, or zero for a static getter.</param>
+    /// <returns>The rooted managed invocation result.</returns>
+    private RuntimeManagedInvocationResult InvokeManagedGetter(ResolvedProperty property, nint domainAddress, nint methodAddress, nint instanceAddress)
+    {
+        RuntimeManagedInvocationResult result = _runtime.InvokeParameterlessMethod(domainAddress, methodAddress, instanceAddress, _callTimeout);
+        ThrowIfManagedException(property, result);
+        return result;
+    }
+
+    /// <summary>Converts a managed exception reported by a completed runtime invocation into the public invocation exception without masking it with result cleanup failure.</summary>
+    /// <param name="property">The property used for diagnostic identity.</param>
+    /// <param name="result">The completed managed invocation result.</param>
+    private void ThrowIfManagedException(ResolvedProperty property, RuntimeManagedInvocationResult result)
+    {
         if (result.ExceptionAddress != 0)
         {
             TryReleaseResult(result);
             throw new Il2CppInvocationException($"IL2CPP getter '{property.DeclaringType.Query.Namespace}.{property.DeclaringType.Query.Name}.{property.Query.Name}' raised a managed exception at 0x{result.ExceptionAddress:X}.", result.ExceptionAddress);
         }
+    }
 
-        return result;
+    /// <summary>Creates and validates one temporary strong root for a caller-supplied instance before any runtime operation depends on its object identity.</summary>
+    /// <param name="property">The property declaring the expected runtime class.</param>
+    /// <param name="instanceAddress">The non-null caller-supplied managed object address.</param>
+    /// <returns>The validated rooted object used for the complete instance invocation.</returns>
+    private RuntimeObjectRoot RootInstance(ResolvedProperty property, nint instanceAddress)
+    {
+        ValidateInstanceAddress(property, instanceAddress);
+        RuntimeObjectRoot root = _runtime.RootObject(instanceAddress, _callTimeout);
+        ValidateRootedInstance(property, root);
+        return root;
     }
 
     /// <summary>Retains one non-null getter result for APIs that expose a remote reference beyond the invocation call.</summary>
@@ -322,10 +430,31 @@ internal sealed class Il2CppGetterInvoker
         }
     }
 
-    /// <summary>Validates a managed object before it is supplied to an instance property getter.</summary>
+    /// <summary>Releases one temporary strong root protecting a managed instance during getter invocation.</summary>
+    /// <param name="root">The temporary instance root whose ownership ends with the invocation.</param>
+    private void ReleaseObjectRoot(RuntimeObjectRoot root)
+    {
+        _runtime.ReleaseGcHandle(root.GcHandle, _callTimeout);
+    }
+
+    /// <summary>Attempts to release one temporary instance root without allowing cleanup failure to replace an already established primary exception.</summary>
+    /// <param name="root">The temporary instance root whose cleanup should be attempted once.</param>
+    private void TryReleaseObjectRoot(RuntimeObjectRoot root)
+    {
+        try
+        {
+            ReleaseObjectRoot(root);
+        }
+        catch (Exception)
+        {
+            // Cleanup cannot be retried safely because a timed-out target call may already have released the handle.
+        }
+    }
+
+    /// <summary>Validates a caller-supplied managed object address before the resolver attempts to create a strong root for it.</summary>
     /// <param name="property">The property declaring the expected runtime class.</param>
     /// <param name="instanceAddress">The non-null managed object address.</param>
-    private void ValidateInstance(ResolvedProperty property, nint instanceAddress)
+    private void ValidateInstanceAddress(ResolvedProperty property, nint instanceAddress)
     {
         if (instanceAddress == 0)
             throw new ArgumentOutOfRangeException(nameof(instanceAddress), "An instance property getter requires a non-null Il2CppObject pointer.");
@@ -337,14 +466,58 @@ internal sealed class Il2CppGetterInvoker
 
         if (!_memory.IsReadableRange(instanceAddress, objectHeaderSize))
             throw new InvalidDataException($"Managed object header at 0x{instanceAddress:X} is not completely readable.");
+    }
 
-        nint objectClass = _runtime.GetObjectClass(instanceAddress, _callTimeout);
+    /// <summary>Validates the concrete runtime class of one managed object after its lifetime has been protected by a strong GC handle.</summary>
+    /// <param name="property">The property declaring the expected runtime class.</param>
+    /// <param name="root">The temporary strong root whose managed target is being validated.</param>
+    private void ValidateRootedInstance(ResolvedProperty property, RuntimeObjectRoot root)
+    {
+        nuint objectHeaderSize = checked((nuint)(IntPtr.Size * 2));
 
-        if (!_memory.IsReadableRange(objectClass, (nuint)IntPtr.Size))
-            throw new InvalidDataException($"Runtime class 0x{objectClass:X} returned for object 0x{instanceAddress:X} is not readable.");
+        try
+        {
+            if (!_memory.IsReadableRange(root.ObjectAddress, objectHeaderSize))
+                throw new InvalidDataException($"Rooted managed object header at 0x{root.ObjectAddress:X} is not completely readable.");
+        }
+        catch
+        {
+            TryReleaseObjectRoot(root);
+            throw;
+        }
 
-        if (!_runtime.IsClassAssignableFrom(property.DeclaringType.ClassAddress, objectClass, _callTimeout))
-            throw new InvalidOperationException($"Object 0x{instanceAddress:X} is not assignable to property declaring type '{property.DeclaringType.Query.Namespace}.{property.DeclaringType.Query.Name}'.");
+        nint objectClass;
+
+        try
+        {
+            objectClass = _runtime.GetObjectClass(root.ObjectAddress, _callTimeout);
+        }
+        catch (InvalidDataException)
+        {
+            // A null class result is reported only after the object-sensitive remote call completed, so the temporary root can be released safely.
+            TryReleaseObjectRoot(root);
+            throw;
+        }
+        catch
+        {
+            // Remote-thread completion may be unknown, so the temporary root is deliberately abandoned rather than released while that thread may still depend on it.
+            throw;
+        }
+
+        try
+        {
+            if (!_memory.IsReadableRange(objectClass, (nuint)IntPtr.Size))
+                throw new InvalidDataException($"Runtime class 0x{objectClass:X} returned for object 0x{root.ObjectAddress:X} is not readable.");
+
+            if (!_runtime.IsClassAssignableFrom(property.DeclaringType.ClassAddress, objectClass, _callTimeout))
+                throw new InvalidOperationException($"Object 0x{root.ObjectAddress:X} is not assignable to property declaring type '{property.DeclaringType.Query.Namespace}.{property.DeclaringType.Query.Name}'.");
+        }
+        catch
+        {
+            // Class-only validation no longer passes the managed object to the remote thread, so the instance root is safe to release on failure.
+            TryReleaseObjectRoot(root);
+            throw;
+        }
     }
 
     /// <summary>Unboxes one required value-type result and validates the complete returned payload range before local reconstruction.</summary>
