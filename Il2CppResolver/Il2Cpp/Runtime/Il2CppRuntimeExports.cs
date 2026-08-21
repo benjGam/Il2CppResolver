@@ -145,6 +145,8 @@ internal sealed class Il2CppRuntimeExports
     private const string ClassIsAssignableFromExportName = "il2cpp_class_is_assignable_from";
     /// <summary>Defines the optional export used to create a strong GC handle for one managed object.</summary>
     private const string GcHandleNewExportName = "il2cpp_gchandle_new";
+    /// <summary>Defines the optional export used to retrieve the managed object retained by one GC handle.</summary>
+    private const string GcHandleGetTargetExportName = "il2cpp_gchandle_get_target";
     /// <summary>Defines the optional export used to release one previously created GC handle.</summary>
     private const string GcHandleFreeExportName = "il2cpp_gchandle_free";
 
@@ -281,6 +283,8 @@ internal sealed class Il2CppRuntimeExports
     public nint? ClassIsAssignableFrom { get; }
     /// <summary>Gets the optional native address of <c>il2cpp_gchandle_new</c>.</summary>
     public nint? GcHandleNew { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_gchandle_get_target</c>.</summary>
+    public nint? GcHandleGetTarget { get; }
     /// <summary>Gets the optional native address of <c>il2cpp_gchandle_free</c>.</summary>
     public nint? GcHandleFree { get; }
 
@@ -354,6 +358,7 @@ internal sealed class Il2CppRuntimeExports
         ObjectGetVirtualMethod = ResolveOptionalExport(image, ObjectGetVirtualMethodExportName);
         ClassIsAssignableFrom = ResolveOptionalExport(image, ClassIsAssignableFromExportName);
         GcHandleNew = ResolveOptionalExport(image, GcHandleNewExportName);
+        GcHandleGetTarget = ResolveOptionalExport(image, GcHandleGetTargetExportName);
         GcHandleFree = ResolveOptionalExport(image, GcHandleFreeExportName);
     }
 

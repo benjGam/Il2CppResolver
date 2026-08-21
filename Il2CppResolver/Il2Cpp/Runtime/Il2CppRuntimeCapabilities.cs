@@ -22,7 +22,9 @@ internal sealed class Il2CppRuntimeCapabilities
     public bool CanReadManagedStrings { get; }
     /// <summary>Gets a value indicating whether single-dimensional zero-based arrays can be inspected and read safely.</summary>
     public bool CanInspectArrays { get; }
-    /// <summary>Gets a value indicating whether parameterless managed getters can be invoked with thread attachment, instance validation, virtual dispatch, strong result rooting and boxed-value unboxing support.</summary>
+    /// <summary>Gets a value indicating whether managed object references can be protected by strong GC handles and resolved back to their rooted targets.</summary>
+    public bool CanRootManagedObjects { get; }
+    /// <summary>Gets a value indicating whether the base parameterless managed getter path supports thread attachment, instance validation, virtual dispatch, strong result rooting and boxed-value unboxing. Instance calls additionally require <see cref="CanRootManagedObjects"/>.</summary>
     public bool CanInvokePropertyGetters { get; }
 
     /// <summary>Initializes the capability snapshot from the resolved runtime export table.</summary>
@@ -39,6 +41,7 @@ internal sealed class Il2CppRuntimeCapabilities
         CanInspectMethodMetadata = exports.MethodGetFlags is not null && exports.MethodIsGeneric is not null && exports.MethodIsInflated is not null && exports.MethodGetToken is not null;
         CanReadManagedStrings = exports.StringLength is not null && exports.StringChars is not null;
         CanInspectArrays = CanInspectFieldValueTypes && exports.ArrayLength is not null && exports.ArrayGetByteLength is not null && exports.ArrayElementSize is not null && exports.ClassGetElementClass is not null && exports.ClassGetType is not null;
+        CanRootManagedObjects = exports.GcHandleNew is not null && exports.GcHandleGetTarget is not null && exports.GcHandleFree is not null;
         CanInvokePropertyGetters = CanInspectFieldValueTypes && exports.RuntimeInvoke is not null && exports.ObjectUnbox is not null && exports.ThreadAttach is not null && exports.ThreadDetach is not null && exports.MethodIsInstance is not null && exports.MethodIsGeneric is not null && exports.ObjectGetClass is not null && exports.ObjectGetVirtualMethod is not null && exports.ClassIsAssignableFrom is not null && exports.GcHandleNew is not null && exports.GcHandleFree is not null;
     }
 }

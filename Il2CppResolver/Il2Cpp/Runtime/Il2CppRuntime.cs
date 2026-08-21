@@ -8,6 +8,7 @@ using RuntimeFieldInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppFieldInf
 using RuntimeMethodInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppMethodInfo;
 using RuntimeMethodMetadata = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppMethodMetadata;
 using RuntimeManagedInvocationResult = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppManagedInvocationResult;
+using RuntimeObjectRoot = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppObjectRoot;
 using RuntimeTypeCode = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppTypeCode;
 using RuntimeTypeDescriptor = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppTypeDescriptor;
 using UnityIl2CppResolver.Native.Remote;
@@ -1175,6 +1176,44 @@ internal sealed class Il2CppRuntime
 
         RemoteCallIl2CppInvokeResult result = _remoteCall.InvokeIl2CppRuntimeInvoke(_exports.ThreadAttach.Value, _exports.ThreadDetach.Value, _exports.RuntimeInvoke.Value, _exports.GcHandleNew.Value, domainAddress, methodAddress, instanceAddress, timeout);
         return new RuntimeManagedInvocationResult(result.ReturnValue, result.ExceptionAddress, result.ReturnValueGcHandle);
+    }
+
+    /// <summary>Creates one strong root for a managed object and resolves the object target back from the opaque pointer-sized GC handle.</summary>
+    /// <param name="objectAddress">The non-null managed <c>Il2CppObject*</c> to protect.</param>
+    /// <param name="timeout">The maximum duration allowed for each individual GC-handle operation.</param>
+    /// <returns>The rooted managed object address and owned strong GC handle.</returns>
+    public RuntimeObjectRoot RootObject(nint objectAddress, TimeSpan timeout)
+    {
+        if (objectAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(objectAddress), "The IL2CPP object pointer cannot be zero.");
+
+        if (!Capabilities.CanRootManagedObjects || !_exports.GcHandleNew.HasValue || !_exports.GcHandleGetTarget.HasValue || !_exports.GcHandleFree.HasValue)
+            throw new NotSupportedException("The target IL2CPP runtime does not expose the complete managed object rooting capability.");
+
+        RemoteCallResult handleResult = _remoteCall.InvokePointer(_exports.GcHandleNew.Value, objectAddress, 0, timeout);
+        nuint gcHandle = unchecked((nuint)(ulong)handleResult.ReturnValue.ToInt64());
+
+        if (gcHandle == 0)
+            throw new InvalidDataException($"IL2CPP failed to create a strong GC handle for object 0x{objectAddress:X}.");
+
+        // If target resolution fails before remote-thread termination can be proven, the new handle is intentionally abandoned rather than released while that thread may still reference it.
+        nint rootedObjectAddress = _remoteCall.InvokePointer(_exports.GcHandleGetTarget.Value, unchecked((nint)gcHandle), timeout).ReturnValue;
+
+        if (rootedObjectAddress == 0)
+        {
+            try
+            {
+                ReleaseGcHandle(gcHandle, timeout);
+            }
+            catch (Exception)
+            {
+                // Cleanup cannot be retried safely because a timed-out target call may already have released the handle.
+            }
+
+            throw new InvalidDataException($"IL2CPP GC handle 0x{gcHandle:X} did not resolve to a managed object target.");
+        }
+
+        return new RuntimeObjectRoot(rootedObjectAddress, gcHandle);
     }
 
     /// <summary>Releases one strong IL2CPP GC handle previously created for a managed invocation result through the native GC-handle API, which does not require a managed thread attachment.</summary>
