@@ -6,8 +6,8 @@ using UnityIl2CppResolver.Il2Cpp.Results;
 namespace UnityIl2CppResolver.Il2Cpp;
 
 /// <summary>
-/// Provides the public semantic entry point for resolving IL2CPP assemblies, types, methods, fields, native method code and normal static-field storage inside a Windows x64 Unity process.
-/// The resolver owns one serialized session and exposes a linear configuration API so consumers can select compatibility layouts once, while runtime discovery, caching, remote execution and optional automatic detection remain internal implementation details.
+/// Provides the public semantic entry point for resolving and navigating IL2CPP assemblies, types, methods, fields, native method code and normal static-field storage inside a Windows x64 Unity process.
+/// The resolver owns one serialized session and exposes a linear configuration API while resolved entities provide session-bound navigation endpoints that reuse the same runtime catalogues and caches.
 /// </summary>
 public sealed class Il2CppResolver : IDisposable
 {
@@ -102,6 +102,17 @@ public sealed class Il2CppResolver : IDisposable
         return _session.RegisterFieldStorageLayout(layout);
     }
 
+    /// <summary>
+    /// Gets every assembly currently registered in the active IL2CPP domain.
+    /// The complete assembly snapshot is materialized only once per cache generation and subsequent calls reuse local session data.
+    /// </summary>
+    /// <returns>Every resolved assembly currently loaded by the target runtime.</returns>
+    public IReadOnlyList<ResolvedAssembly> GetAssemblies()
+    {
+        ThrowIfDisposed();
+        return _session.GetAssemblies();
+    }
+
     /// <summary>Resolves a loaded IL2CPP assembly from its semantic identity.</summary>
     /// <param name="query">The semantic assembly query to resolve.</param>
     /// <returns>The resolved assembly and runtime identity.</returns>
@@ -194,6 +205,7 @@ public sealed class Il2CppResolver : IDisposable
 
     /// <summary>
     /// Invalidates semantic results, runtime snapshots and automatically detected layouts while preserving explicitly selected layouts and registered compatibility candidates.
+    /// Resolved entities created before this operation remain readable snapshots, but their navigation endpoints are intentionally invalidated and must be reacquired from the resolver.
     /// </summary>
     public void ClearCache()
     {

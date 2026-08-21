@@ -113,31 +113,6 @@ internal sealed class ModuleCatalog
     }
 
     /// <summary>
-    /// Retrieves a required loaded module by file name.
-    /// This method is intended for higher-level discovery components that cannot continue when a specific native module is absent.
-    /// </summary>
-    /// <param name="moduleName">The file name of the required module.</param>
-    /// <returns>The matching loaded module description.</returns>
-    /// <exception cref="ArgumentException">
-    /// Thrown when <paramref name="moduleName"/> is empty or contains only whitespace.
-    /// </exception>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when the target process has terminated or when the requested module is not loaded.
-    /// </exception>
-    /// <exception cref="Win32Exception">
-    /// Thrown when the process modules cannot be enumerated.
-    /// </exception>
-    public ProcessModuleInfo GetRequired(string moduleName)
-    {
-        ProcessModuleInfo? module = Find(moduleName);
-
-        if (module is null)
-            throw new InvalidOperationException($"Module '{moduleName}' is not loaded in process {_target.ProcessId}.");
-
-        return module;
-    }
-
-    /// <summary>
     /// Converts a native Windows module snapshot entry into the immutable representation exposed by this catalog.
     /// </summary>
     /// <param name="entry">The native module entry populated by the Windows Tool Help API.</param>

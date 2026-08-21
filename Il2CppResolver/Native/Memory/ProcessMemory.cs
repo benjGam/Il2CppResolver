@@ -19,11 +19,6 @@ internal sealed class ProcessMemory
     private const uint MemoryCommit = 0x00001000;
 
     /// <summary>
-    /// Represents the Windows <c>PAGE_NOACCESS</c> protection.
-    /// </summary>
-    private const uint PageNoAccess = 0x00000001;
-
-    /// <summary>
     /// Represents the Windows <c>PAGE_READONLY</c> protection.
     /// </summary>
     private const uint PageReadOnly = 0x00000002;

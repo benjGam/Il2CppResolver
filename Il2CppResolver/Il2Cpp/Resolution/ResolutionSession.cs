@@ -2,6 +2,7 @@ using UnityIl2CppResolver.Il2Cpp.Detection;
 using UnityIl2CppResolver.Il2Cpp.Discovery;
 using UnityIl2CppResolver.Il2Cpp.Layouts;
 using UnityIl2CppResolver.Il2Cpp.Mapping;
+using UnityIl2CppResolver.Il2Cpp.Navigation;
 using UnityIl2CppResolver.Il2Cpp.Queries;
 using UnityIl2CppResolver.Il2Cpp.Results;
 using UnityIl2CppResolver.Il2Cpp.Runtime;
@@ -14,7 +15,7 @@ namespace UnityIl2CppResolver.Il2Cpp.Resolution;
 /// Owns the complete native and IL2CPP state associated with one resolver attachment to a target process.
 /// The session serializes public resolution and configuration operations, owns all session-scoped caches and runtime catalogues, and separates explicitly selected compatibility layouts from layouts inferred automatically from runtime evidence.
 /// </summary>
-internal sealed class ResolutionSession : IDisposable
+internal sealed class ResolutionSession : IDisposable, IResolutionNavigator
 {
     /// <summary>Defines the maximum number of methods sampled when MethodInfo layout detection is required.</summary>
     private const int MethodInfoLayoutSampleSize = 12;
@@ -35,6 +36,8 @@ internal sealed class ResolutionSession : IDisposable
     private readonly Il2CppRuntimeCatalog _runtimeCatalog;
     /// <summary>Stores semantic and native resolution results for the current cache generation.</summary>
     private readonly ResolutionCache _cache;
+    /// <summary>Binds public resolved entities back to this session and tracks cache-generation invalidation.</summary>
+    private readonly ResolutionBinding _binding;
     /// <summary>Represents the active semantic resolution backend.</summary>
     private readonly IIl2CppResolutionBackend _backend;
     /// <summary>Stores built-in and consumer-registered layout candidates available to automatic detection.</summary>
@@ -93,10 +96,11 @@ internal sealed class ResolutionSession : IDisposable
     /// <param name="runtimeCatalog">The session-scoped runtime catalogue.</param>
     /// <param name="backend">The semantic resolution backend.</param>
     /// <param name="cache">The semantic and native resolution cache.</param>
+    /// <param name="binding">The navigation binding shared by resolved public entities.</param>
     /// <param name="layoutRegistry">The registry of automatic-detection layout candidates.</param>
     /// <param name="runtimeStaticFieldStorageResolver">The optional public-runtime-API field-storage resolver.</param>
     /// <param name="callTimeout">The timeout applied to individual remote runtime calls.</param>
-    private ResolutionSession(TargetProcess process, Il2CppTarget target, Il2CppRuntime runtime, Il2CppRuntimeCatalog runtimeCatalog, IIl2CppResolutionBackend backend, ResolutionCache cache, Il2CppLayoutRegistry layoutRegistry, Il2CppRuntimeStaticFieldStorageResolver runtimeStaticFieldStorageResolver, TimeSpan callTimeout)
+    private ResolutionSession(TargetProcess process, Il2CppTarget target, Il2CppRuntime runtime, Il2CppRuntimeCatalog runtimeCatalog, IIl2CppResolutionBackend backend, ResolutionCache cache, ResolutionBinding binding, Il2CppLayoutRegistry layoutRegistry, Il2CppRuntimeStaticFieldStorageResolver runtimeStaticFieldStorageResolver, TimeSpan callTimeout)
     {
         _process = process;
         _target = target;
@@ -104,6 +108,7 @@ internal sealed class ResolutionSession : IDisposable
         _runtimeCatalog = runtimeCatalog;
         _backend = backend;
         _cache = cache;
+        _binding = binding;
         _layoutRegistry = layoutRegistry;
         _runtimeStaticFieldStorageResolver = runtimeStaticFieldStorageResolver;
         _callTimeout = callTimeout;
@@ -129,10 +134,13 @@ internal sealed class ResolutionSession : IDisposable
             Il2CppRuntime runtime = new(target, exports);
             Il2CppRuntimeCatalog runtimeCatalog = new(runtime, callTimeout);
             ResolutionCache cache = new();
-            RuntimeResolutionBackend backend = new(runtime, runtimeCatalog, cache, callTimeout);
+            ResolutionBinding binding = new();
+            RuntimeResolutionBackend backend = new(runtime, runtimeCatalog, cache, binding, callTimeout);
             Il2CppLayoutRegistry layoutRegistry = new(Il2CppClassLayouts.BuiltIn, Il2CppMethodInfoLayouts.BuiltIn);
             Il2CppRuntimeStaticFieldStorageResolver runtimeStaticFieldStorageResolver = new(runtime, target.Memory, callTimeout);
-            return new ResolutionSession(process, target, runtime, runtimeCatalog, backend, cache, layoutRegistry, runtimeStaticFieldStorageResolver, callTimeout);
+            ResolutionSession session = new(process, target, runtime, runtimeCatalog, backend, cache, binding, layoutRegistry, runtimeStaticFieldStorageResolver, callTimeout);
+            binding.Bind(session);
+            return session;
         }
         catch
         {
@@ -218,6 +226,17 @@ internal sealed class ResolutionSession : IDisposable
                 _detectedMethodInfoLayout = null;
 
             return added;
+        }
+    }
+
+    /// <summary>Gets every loaded assembly from the session-scoped runtime snapshot.</summary>
+    /// <returns>Every resolved assembly currently registered in the active IL2CPP domain.</returns>
+    public IReadOnlyList<ResolvedAssembly> GetAssemblies()
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            return _backend.GetAssemblies();
         }
     }
 
@@ -314,17 +333,7 @@ internal sealed class ResolutionSession : IDisposable
             ThrowIfDisposed();
             ArgumentNullException.ThrowIfNull(query);
             ResolvedField field = _backend.ResolveField(query);
-
-            if (_selectedFieldStorageLayout is not null)
-                return ResolveFieldStorageCore(field, _selectedFieldStorageLayout);
-
-            if (_runtime.Capabilities.HasStaticFieldStorageApi)
-                return ResolveRuntimeFieldStorageCore(field);
-
-            if (_detectedFieldStorageLayout is not null)
-                return ResolveFieldStorageCore(field, _detectedFieldStorageLayout);
-
-            throw new InvalidOperationException("No field-storage layout is selected and the target does not expose the public IL2CPP static-field storage API. Call SetFieldStorageLayout or provide layout evidence for automatic detection.");
+            return ResolveFieldStorageDefaultCore(field);
         }
     }
 
@@ -376,6 +385,189 @@ internal sealed class ResolutionSession : IDisposable
             _runtimeCatalog.Clear();
             _detectedMethodInfoLayout = null;
             _detectedFieldStorageLayout = null;
+            _binding.AdvanceGeneration();
+        }
+    }
+
+    /// <summary>Enumerates every type exposed by a resolved assembly after validating that the originating entity belongs to the active cache generation.</summary>
+    /// <param name="assembly">The resolved assembly whose image should be enumerated.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="assembly"/>.</param>
+    /// <returns>Every resolved type exposed by the assembly image.</returns>
+    IReadOnlyList<ResolvedType> IResolutionNavigator.GetTypes(ResolvedAssembly assembly, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(assembly);
+            return _backend.GetTypes(assembly);
+        }
+    }
+
+    /// <summary>Resolves one type relative to a resolved assembly after validating the originating cache generation.</summary>
+    /// <param name="assembly">The resolved assembly containing the requested type.</param>
+    /// <param name="namespaceName">The exact managed namespace. An empty namespace is valid.</param>
+    /// <param name="typeName">The exact managed type name.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="assembly"/>.</param>
+    /// <returns>The resolved runtime type.</returns>
+    ResolvedType IResolutionNavigator.ResolveType(ResolvedAssembly assembly, string namespaceName, string typeName, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(assembly);
+            ArgumentNullException.ThrowIfNull(namespaceName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(typeName);
+            return _backend.ResolveType(new TypeQuery(assembly.Name, namespaceName, typeName));
+        }
+    }
+
+    /// <summary>Enumerates every method declared by a resolved type after validating the originating cache generation.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>Every declared resolved method with complete semantic signatures.</returns>
+    IReadOnlyList<ResolvedMethod> IResolutionNavigator.GetMethods(ResolvedType type, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            return _backend.GetMethods(type);
+        }
+    }
+
+    /// <summary>Enumerates every overload with an exact method name after validating the originating cache generation.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="name">The exact managed method name.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>Every resolved overload sharing the requested name.</returns>
+    IReadOnlyList<ResolvedMethod> IResolutionNavigator.GetMethods(ResolvedType type, string name, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            ArgumentException.ThrowIfNullOrWhiteSpace(name);
+            return _backend.GetMethods(type, name);
+        }
+    }
+
+    /// <summary>Resolves one exact method overload relative to a resolved declaring type after validating the originating cache generation.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="methodName">The exact managed method name.</param>
+    /// <param name="parameterTypeNames">The ordered semantic parameter type names identifying the overload.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>The unique resolved method matching the requested signature.</returns>
+    ResolvedMethod IResolutionNavigator.ResolveMethod(ResolvedType type, string methodName, IReadOnlyList<string> parameterTypeNames, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            ArgumentException.ThrowIfNullOrWhiteSpace(methodName);
+            ArgumentNullException.ThrowIfNull(parameterTypeNames);
+            return _backend.ResolveMethod(new MethodQuery(type.Query, methodName, parameterTypeNames.ToArray()));
+        }
+    }
+
+    /// <summary>Enumerates every field declared by a resolved type after validating the originating cache generation.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>Every declared resolved field with semantic type and storage metadata.</returns>
+    IReadOnlyList<ResolvedField> IResolutionNavigator.GetFields(ResolvedType type, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            return _backend.GetFields(type);
+        }
+    }
+
+    /// <summary>Resolves one exact field relative to a resolved declaring type after validating the originating cache generation.</summary>
+    /// <param name="type">The resolved declaring type.</param>
+    /// <param name="fieldName">The exact managed field name.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="type"/>.</param>
+    /// <returns>The unique resolved field matching the requested name.</returns>
+    ResolvedField IResolutionNavigator.ResolveField(ResolvedType type, string fieldName, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(type);
+            ArgumentException.ThrowIfNullOrWhiteSpace(fieldName);
+            return _backend.ResolveField(new FieldQuery(type.Query, fieldName));
+        }
+    }
+
+    /// <summary>Maps a resolved method to native code through the session's active MethodInfo layout policy after validating the originating cache generation.</summary>
+    /// <param name="method">The resolved method to map.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="method"/>.</param>
+    /// <returns>The validated native method-code mapping.</returns>
+    ResolvedMethodCode IResolutionNavigator.ResolveMethodCode(ResolvedMethod method, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(method);
+            Il2CppMethodInfoLayout layout = _selectedMethodInfoLayout ?? GetDetectedMethodInfoLayout(method.DeclaringType);
+            return ResolveMethodCodeCore(method, layout);
+        }
+    }
+
+    /// <summary>Maps a resolved method to native code through one explicit MethodInfo layout override after validating the originating cache generation.</summary>
+    /// <param name="method">The resolved method to map.</param>
+    /// <param name="layout">The one-shot MethodInfo structural layout.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="method"/>.</param>
+    /// <returns>The validated native method-code mapping.</returns>
+    ResolvedMethodCode IResolutionNavigator.ResolveMethodCode(ResolvedMethod method, Il2CppMethodInfoLayout layout, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(method);
+            ArgumentNullException.ThrowIfNull(layout);
+            return ResolveMethodCodeCore(method, layout);
+        }
+    }
+
+    /// <summary>Maps a resolved normal static field through the session's active storage-selection policy after validating the originating cache generation.</summary>
+    /// <param name="field">The resolved field whose storage should be mapped.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The validated concrete static-field storage mapping.</returns>
+    ResolvedFieldStorage IResolutionNavigator.ResolveFieldStorage(ResolvedField field, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            return ResolveFieldStorageDefaultCore(field);
+        }
+    }
+
+    /// <summary>Maps a resolved normal static field through one explicit Il2CppClass layout override after validating the originating cache generation.</summary>
+    /// <param name="field">The resolved field whose storage should be mapped.</param>
+    /// <param name="layout">The one-shot Il2CppClass structural layout.</param>
+    /// <param name="generation">The cache generation that produced <paramref name="field"/>.</param>
+    /// <returns>The validated concrete static-field storage mapping.</returns>
+    ResolvedFieldStorage IResolutionNavigator.ResolveFieldStorage(ResolvedField field, Il2CppClassLayout layout, long generation)
+    {
+        lock (_syncRoot)
+        {
+            ThrowIfDisposed();
+            ValidateGeneration(generation);
+            ArgumentNullException.ThrowIfNull(field);
+            ArgumentNullException.ThrowIfNull(layout);
+            return ResolveFieldStorageCore(field, layout);
         }
     }
 
@@ -407,6 +599,23 @@ internal sealed class ResolutionSession : IDisposable
         ResolvedMethodCode result = pointerResolver.Resolve(method);
         _cache.StoreMethodCode(result, layout);
         return result;
+    }
+
+    /// <summary>Maps an already resolved field using the session's active field-storage selection policy.</summary>
+    /// <param name="field">The resolved normal static field.</param>
+    /// <returns>The validated concrete field-storage mapping.</returns>
+    private ResolvedFieldStorage ResolveFieldStorageDefaultCore(ResolvedField field)
+    {
+        if (_selectedFieldStorageLayout is not null)
+            return ResolveFieldStorageCore(field, _selectedFieldStorageLayout);
+
+        if (_runtime.Capabilities.HasStaticFieldStorageApi)
+            return ResolveRuntimeFieldStorageCore(field);
+
+        if (_detectedFieldStorageLayout is not null)
+            return ResolveFieldStorageCore(field, _detectedFieldStorageLayout);
+
+        throw new InvalidOperationException("No field-storage layout is selected and the target does not expose the public IL2CPP static-field storage API. Call SetFieldStorageLayout or provide layout evidence for automatic detection.");
     }
 
     /// <summary>Maps an already resolved static field through the specified structural class layout.</summary>
@@ -492,6 +701,15 @@ internal sealed class ResolutionSession : IDisposable
         Il2CppClassLayoutDetectionResult detection = detector.Detect(evidence);
         _detectedFieldStorageLayout = detection.Layout;
         return _detectedFieldStorageLayout;
+    }
+
+    /// <summary>Rejects navigation through a resolved entity created before the most recent cache invalidation.</summary>
+    /// <param name="generation">The cache generation stamped onto the resolved entity.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the entity belongs to an invalidated cache generation.</exception>
+    private void ValidateGeneration(long generation)
+    {
+        if (generation != _binding.Generation)
+            throw new InvalidOperationException("The resolved entity belongs to an invalidated resolver generation. Resolve the entity again before navigating from it.");
     }
 
     /// <summary>Throws when an operation is attempted after the session has released its target process.</summary>

@@ -1,7 +1,10 @@
 using System.Buffers.Binary;
 using System.Text;
 using UnityIl2CppResolver.Il2Cpp.Discovery;
-using UnityIl2CppResolver.Il2Cpp.Runtime.Model;
+using RuntimeAssemblyInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppAssemblyInfo;
+using RuntimeClassInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppClassInfo;
+using RuntimeFieldInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppFieldInfo;
+using RuntimeMethodInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppMethodInfo;
 using UnityIl2CppResolver.Native.Remote;
 
 namespace UnityIl2CppResolver.Il2Cpp.Runtime;
@@ -24,6 +27,12 @@ internal sealed class Il2CppRuntime
     /// This defensive limit prevents malformed runtime pointers from causing unbounded remote string reads.
     /// </summary>
     private const int MaximumImageNameLength = 1024;
+
+    /// <summary>
+    /// Defines the defensive maximum number of classes accepted while enumerating a single IL2CPP image.
+    /// This value is intentionally generous while preventing corrupted runtime data from forcing unbounded class traversal.
+    /// </summary>
+    private const ulong MaximumImageClassCount = 1_000_000;
 
     /// <summary>
     /// Defines the defensive maximum number of methods accepted while enumerating a single IL2CPP class.
@@ -170,10 +179,10 @@ internal sealed class Il2CppRuntime
     /// <exception cref="InvalidDataException">
     /// Thrown when IL2CPP returns a null image, a null image-name pointer or invalid string data for any discovered assembly.
     /// </exception>
-    public IReadOnlyList<Il2CppAssemblyInfo> GetAssemblyInfos(nint domain, TimeSpan timeout)
+    public IReadOnlyList<RuntimeAssemblyInfo> GetAssemblyInfos(nint domain, TimeSpan timeout)
     {
         IReadOnlyList<nint> assemblies = GetAssemblies(domain, timeout);
-        List<Il2CppAssemblyInfo> results = new(assemblies.Count);
+        List<RuntimeAssemblyInfo> results = new(assemblies.Count);
 
         foreach (nint assemblyAddress in assemblies)
         {
@@ -191,10 +200,68 @@ internal sealed class Il2CppRuntime
 
             string name = _target.Memory.ReadNullTerminatedAscii(nameResult.ReturnValue, MaximumImageNameLength);
 
-            results.Add(new Il2CppAssemblyInfo(assemblyAddress, imageAddress, name));
+            results.Add(new RuntimeAssemblyInfo(assemblyAddress, imageAddress, name));
         }
 
         return results.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Retrieves every class exposed by an IL2CPP image through the optional public image/class enumeration APIs.
+    /// The complete image is inspected only for explicit navigation operations; targeted semantic type resolution continues to use <c>il2cpp_class_from_name</c>.
+    /// </summary>
+    /// <param name="imageAddress">The native <c>Il2CppImage*</c> whose classes should be enumerated.</param>
+    /// <param name="timeout">The maximum amount of time allowed for each individual native runtime call.</param>
+    /// <returns>An immutable snapshot containing native class identity, namespace and name for every class exposed by the image.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="imageAddress"/> is zero.</exception>
+    /// <exception cref="NotSupportedException">Thrown when the target does not expose the required image/class enumeration exports.</exception>
+    /// <exception cref="InvalidDataException">Thrown when IL2CPP reports an unreasonable class count or returns invalid class/name pointers.</exception>
+    public IReadOnlyList<RuntimeClassInfo> GetClasses(nint imageAddress, TimeSpan timeout)
+    {
+        if (imageAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(imageAddress), "The IL2CPP image pointer cannot be zero.");
+
+        if (!Capabilities.CanEnumerateImageTypes || _exports.ImageGetClassCount is null || _exports.ImageGetClass is null || _exports.ClassGetName is null || _exports.ClassGetNamespace is null)
+            throw new NotSupportedException("The target does not expose the IL2CPP image/class APIs required for type enumeration.");
+
+        nuint rawCount = _remoteCall.InvokeNuint(_exports.ImageGetClassCount.Value, imageAddress, timeout);
+        ulong classCount = (ulong)rawCount;
+
+        if (classCount == 0)
+            return Array.Empty<RuntimeClassInfo>();
+
+        if (classCount > MaximumImageClassCount || classCount > int.MaxValue)
+            throw new InvalidDataException($"The IL2CPP runtime reported an unreasonable image class count of {classCount}.");
+
+        List<RuntimeClassInfo> classes = new(checked((int)classCount));
+
+        for (int index = 0; index < (int)classCount; index++)
+        {
+            RemoteCallResult classResult = _remoteCall.InvokePointer(_exports.ImageGetClass.Value, imageAddress, (nuint)index, timeout);
+
+            if (classResult.ReturnValue == 0)
+                throw new InvalidDataException($"IL2CPP returned a null class pointer for image 0x{imageAddress:X} at index {index}.");
+
+            nint classAddress = classResult.ReturnValue;
+            RemoteCallResult nameResult = _remoteCall.InvokePointer(_exports.ClassGetName.Value, classAddress, timeout);
+            RemoteCallResult namespaceResult = _remoteCall.InvokePointer(_exports.ClassGetNamespace.Value, classAddress, timeout);
+
+            if (nameResult.ReturnValue == 0)
+                throw new InvalidDataException($"IL2CPP returned a null class-name pointer for class 0x{classAddress:X}.");
+
+            if (namespaceResult.ReturnValue == 0)
+                throw new InvalidDataException($"IL2CPP returned a null class-namespace pointer for class 0x{classAddress:X}.");
+
+            string name = _target.Memory.ReadNullTerminatedUtf8(nameResult.ReturnValue, MaximumRuntimeNameLength);
+            string namespaceName = _target.Memory.ReadNullTerminatedUtf8(namespaceResult.ReturnValue, MaximumRuntimeNameLength);
+
+            if (string.IsNullOrWhiteSpace(name))
+                throw new InvalidDataException($"IL2CPP returned an empty class name for class 0x{classAddress:X}.");
+
+            classes.Add(new RuntimeClassInfo(classAddress, namespaceName, name));
+        }
+
+        return classes.AsReadOnly();
     }
 
     /// <summary>
@@ -318,25 +385,13 @@ internal sealed class Il2CppRuntime
     }
 
     /// <summary>
-    /// Retrieves the complete semantic signature of a runtime <c>MethodInfo</c>.
-    /// Parameter and return types are resolved through the public IL2CPP type inspection API.
-    /// </summary>
-    /// <param name="methodAddress">The native <c>MethodInfo*</c> to inspect.</param>
-    /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
-    /// <returns>A semantic runtime description of the requested method.</returns>
-    public Il2CppMethodInfo GetMethodInfo(nint methodAddress, TimeSpan timeout)
-    {
-        return GetMethodInfo(methodAddress, GetMethodName(methodAddress, timeout), timeout);
-    }
-
-    /// <summary>
     /// Retrieves the complete semantic signature of a runtime <c>MethodInfo</c> while reusing a method name already obtained during class-member indexing.
     /// </summary>
     /// <param name="methodAddress">The native <c>MethodInfo*</c> to inspect.</param>
     /// <param name="knownName">The exact semantic method name already obtained from the runtime.</param>
     /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
     /// <returns>A semantic runtime description of the requested method.</returns>
-    public Il2CppMethodInfo GetMethodInfo(nint methodAddress, string knownName, TimeSpan timeout)
+    public RuntimeMethodInfo GetMethodInfo(nint methodAddress, string knownName, TimeSpan timeout)
     {
         if (methodAddress == 0)
             throw new ArgumentOutOfRangeException(nameof(methodAddress), "The IL2CPP method pointer cannot be zero.");
@@ -366,7 +421,7 @@ internal sealed class Il2CppRuntime
             parameterTypeNames.Add(GetTypeName(parameterResult.ReturnValue, timeout));
         }
 
-        return new Il2CppMethodInfo(methodAddress, name, returnTypeName, parameterTypeNames);
+        return new RuntimeMethodInfo(methodAddress, name, returnTypeName, parameterTypeNames);
     }
 
     /// <summary>
@@ -474,25 +529,13 @@ internal sealed class Il2CppRuntime
     }
 
     /// <summary>
-    /// Retrieves the complete semantic and storage description of a runtime <c>FieldInfo</c>.
-    /// The operation resolves the field name, managed type, metadata attributes and raw IL2CPP storage offset without interpreting static storage as an absolute address.
-    /// </summary>
-    /// <param name="fieldAddress">The native <c>FieldInfo*</c> to inspect.</param>
-    /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
-    /// <returns>A semantic runtime description of the requested field.</returns>
-    public Il2CppFieldInfo GetFieldInfo(nint fieldAddress, TimeSpan timeout)
-    {
-        return GetFieldInfo(fieldAddress, GetFieldName(fieldAddress, timeout), timeout);
-    }
-
-    /// <summary>
     /// Retrieves the complete semantic and storage description of a runtime <c>FieldInfo</c> while reusing a field name already obtained during class-member indexing.
     /// </summary>
     /// <param name="fieldAddress">The native <c>FieldInfo*</c> to inspect.</param>
     /// <param name="knownName">The exact semantic field name already obtained from the runtime.</param>
     /// <param name="timeout">The maximum duration allowed for each individual runtime call.</param>
     /// <returns>A semantic runtime description of the requested field.</returns>
-    public Il2CppFieldInfo GetFieldInfo(nint fieldAddress, string knownName, TimeSpan timeout)
+    public RuntimeFieldInfo GetFieldInfo(nint fieldAddress, string knownName, TimeSpan timeout)
     {
         if (fieldAddress == 0)
             throw new ArgumentOutOfRangeException(nameof(fieldAddress), "The IL2CPP field pointer cannot be zero.");
@@ -509,7 +552,7 @@ internal sealed class Il2CppRuntime
         int rawAttributes = _remoteCall.InvokeInt32(_exports.FieldGetFlags, fieldAddress, timeout);
         nuint offset = _remoteCall.InvokeNuint(_exports.FieldGetOffset, fieldAddress, timeout);
 
-        return new Il2CppFieldInfo(fieldAddress, name, typeName, (System.Reflection.FieldAttributes)rawAttributes, offset);
+        return new RuntimeFieldInfo(fieldAddress, name, typeName, (System.Reflection.FieldAttributes)rawAttributes, offset);
     }
 
     /// <summary>

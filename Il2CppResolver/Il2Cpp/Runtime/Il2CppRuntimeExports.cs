@@ -43,6 +43,14 @@ internal sealed class Il2CppRuntimeExports
     private const string FieldGetOffsetExportName = "il2cpp_field_get_offset";
     /// <summary>Defines the export used to release memory allocated by IL2CPP APIs.</summary>
     private const string FreeExportName = "il2cpp_free";
+    /// <summary>Defines the optional export used to retrieve the number of classes exposed by an IL2CPP image.</summary>
+    private const string ImageGetClassCountExportName = "il2cpp_image_get_class_count";
+    /// <summary>Defines the optional export used to retrieve one class from an IL2CPP image by zero-based index.</summary>
+    private const string ImageGetClassExportName = "il2cpp_image_get_class";
+    /// <summary>Defines the optional export used to retrieve the managed name of an IL2CPP class.</summary>
+    private const string ClassGetNameExportName = "il2cpp_class_get_name";
+    /// <summary>Defines the optional export used to retrieve the managed namespace of an IL2CPP class.</summary>
+    private const string ClassGetNamespaceExportName = "il2cpp_class_get_namespace";
     /// <summary>Defines the optional export used to retrieve the static-data pointer owned by an IL2CPP class.</summary>
     private const string ClassGetStaticFieldDataExportName = "il2cpp_class_get_static_field_data";
     /// <summary>Defines the optional export used to retrieve the static-data block size owned by an IL2CPP class.</summary>
@@ -82,6 +90,14 @@ internal sealed class Il2CppRuntimeExports
     public nint FieldGetOffset { get; }
     /// <summary>Gets the native address of <c>il2cpp_free</c>.</summary>
     public nint Free { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_image_get_class_count</c>.</summary>
+    public nint? ImageGetClassCount { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_image_get_class</c>.</summary>
+    public nint? ImageGetClass { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_name</c>.</summary>
+    public nint? ClassGetName { get; }
+    /// <summary>Gets the optional native address of <c>il2cpp_class_get_namespace</c>.</summary>
+    public nint? ClassGetNamespace { get; }
     /// <summary>Gets the optional native address of <c>il2cpp_class_get_static_field_data</c>.</summary>
     public nint? ClassGetStaticFieldData { get; }
     /// <summary>Gets the optional native address of <c>il2cpp_class_get_data_size</c>.</summary>
@@ -107,9 +123,13 @@ internal sealed class Il2CppRuntimeExports
     /// <param name="fieldGetOffset">The native address of <c>il2cpp_field_get_offset</c>.</param>
     /// <param name="typeGetName">The native address of <c>il2cpp_type_get_name</c>.</param>
     /// <param name="free">The native address of <c>il2cpp_free</c>.</param>
+    /// <param name="imageGetClassCount">The optional native address of <c>il2cpp_image_get_class_count</c>.</param>
+    /// <param name="imageGetClass">The optional native address of <c>il2cpp_image_get_class</c>.</param>
+    /// <param name="classGetName">The optional native address of <c>il2cpp_class_get_name</c>.</param>
+    /// <param name="classGetNamespace">The optional native address of <c>il2cpp_class_get_namespace</c>.</param>
     /// <param name="classGetStaticFieldData">The optional native address of <c>il2cpp_class_get_static_field_data</c>.</param>
     /// <param name="classGetDataSize">The optional native address of <c>il2cpp_class_get_data_size</c>.</param>
-    private Il2CppRuntimeExports(nint domainGet, nint domainGetAssemblies, nint assemblyGetImage, nint imageGetName, nint classFromName, nint classGetMethods, nint methodGetName, nint methodGetParamCount, nint methodGetParam, nint methodGetReturnType, nint classGetFields, nint fieldGetName, nint fieldGetType, nint fieldGetFlags, nint fieldGetOffset, nint typeGetName, nint free, nint? classGetStaticFieldData, nint? classGetDataSize)
+    private Il2CppRuntimeExports(nint domainGet, nint domainGetAssemblies, nint assemblyGetImage, nint imageGetName, nint classFromName, nint classGetMethods, nint methodGetName, nint methodGetParamCount, nint methodGetParam, nint methodGetReturnType, nint classGetFields, nint fieldGetName, nint fieldGetType, nint fieldGetFlags, nint fieldGetOffset, nint typeGetName, nint free, nint? imageGetClassCount, nint? imageGetClass, nint? classGetName, nint? classGetNamespace, nint? classGetStaticFieldData, nint? classGetDataSize)
     {
         DomainGet = domainGet;
         DomainGetAssemblies = domainGetAssemblies;
@@ -128,6 +148,10 @@ internal sealed class Il2CppRuntimeExports
         FieldGetOffset = fieldGetOffset;
         TypeGetName = typeGetName;
         Free = free;
+        ImageGetClassCount = imageGetClassCount;
+        ImageGetClass = imageGetClass;
+        ClassGetName = classGetName;
+        ClassGetNamespace = classGetNamespace;
         ClassGetStaticFieldData = classGetStaticFieldData;
         ClassGetDataSize = classGetDataSize;
     }
@@ -161,6 +185,10 @@ internal sealed class Il2CppRuntimeExports
             ResolveRequiredExport(image, FieldGetOffsetExportName),
             ResolveRequiredExport(image, TypeGetNameExportName),
             ResolveRequiredExport(image, FreeExportName),
+            ResolveOptionalExport(image, ImageGetClassCountExportName),
+            ResolveOptionalExport(image, ImageGetClassExportName),
+            ResolveOptionalExport(image, ClassGetNameExportName),
+            ResolveOptionalExport(image, ClassGetNamespaceExportName),
             ResolveOptionalExport(image, ClassGetStaticFieldDataExportName),
             ResolveOptionalExport(image, ClassGetDataSizeExportName));
     }

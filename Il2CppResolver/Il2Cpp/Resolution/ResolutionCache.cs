@@ -19,6 +19,14 @@ internal sealed class ResolutionCache
     private readonly Dictionary<string, ResolvedMethod> _methods = new(StringComparer.Ordinal);
     /// <summary>Stores field resolution results indexed by exact semantic identity.</summary>
     private readonly Dictionary<string, ResolvedField> _fields = new(StringComparer.Ordinal);
+    /// <summary>Stores resolved assemblies indexed by native <c>Il2CppImage*</c> identity so enumeration and targeted resolution share one public object.</summary>
+    private readonly Dictionary<nint, ResolvedAssembly> _assembliesByImageAddress = new();
+    /// <summary>Stores resolved types indexed by native <c>Il2CppClass*</c> identity so enumeration and targeted resolution share one public object.</summary>
+    private readonly Dictionary<nint, ResolvedType> _typesByClassAddress = new();
+    /// <summary>Stores resolved methods indexed by native <c>MethodInfo*</c> identity so overload enumeration and targeted resolution share one public object.</summary>
+    private readonly Dictionary<nint, ResolvedMethod> _methodsByAddress = new();
+    /// <summary>Stores resolved fields indexed by native <c>FieldInfo*</c> identity so field enumeration and targeted resolution share one public object.</summary>
+    private readonly Dictionary<nint, ResolvedField> _fieldsByAddress = new();
 
     /// <summary>
     /// Identifies one native method-code mapping by runtime method identity and exact structural profile evidence.
@@ -57,7 +65,30 @@ internal sealed class ResolutionCache
     public void StoreAssembly(ResolvedAssembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
-        _assemblies[BuildAssemblyKey(assembly.Query)] = assembly;
+        CacheAssemblyQuery(assembly.Query, assembly);
+        _assembliesByImageAddress[assembly.ImageAddress] = assembly;
+    }
+
+    /// <summary>Associates an additional semantic assembly query with an already materialized runtime assembly identity.</summary>
+    /// <param name="query">The semantic alias that should resolve to the existing assembly object.</param>
+    /// <param name="assembly">The existing resolved assembly object.</param>
+    public void CacheAssemblyQuery(AssemblyQuery query, ResolvedAssembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(assembly);
+        _assemblies[BuildAssemblyKey(query)] = assembly;
+    }
+
+    /// <summary>Attempts to retrieve the public assembly object already associated with a native image identity.</summary>
+    /// <param name="imageAddress">The native <c>Il2CppImage*</c> address.</param>
+    /// <param name="assembly">Receives the existing resolved assembly when available.</param>
+    /// <returns><see langword="true"/> when the native image is already represented.</returns>
+    public bool TryGetAssemblyByImageAddress(nint imageAddress, out ResolvedAssembly? assembly)
+    {
+        if (imageAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(imageAddress), "The IL2CPP image address cannot be zero.");
+
+        return _assembliesByImageAddress.TryGetValue(imageAddress, out assembly);
     }
 
     /// <summary>Attempts to retrieve a cached type resolution.</summary>
@@ -75,7 +106,30 @@ internal sealed class ResolutionCache
     public void StoreType(ResolvedType type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        _types[BuildTypeKey(type.Query)] = type;
+        CacheTypeQuery(type.Query, type);
+        _typesByClassAddress[type.ClassAddress] = type;
+    }
+
+    /// <summary>Associates an additional semantic type query with an already materialized runtime class identity.</summary>
+    /// <param name="query">The semantic alias that should resolve to the existing type object.</param>
+    /// <param name="type">The existing resolved type object.</param>
+    public void CacheTypeQuery(TypeQuery query, ResolvedType type)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(type);
+        _types[BuildTypeKey(query)] = type;
+    }
+
+    /// <summary>Attempts to retrieve the public type object already associated with a native class identity.</summary>
+    /// <param name="classAddress">The native <c>Il2CppClass*</c> address.</param>
+    /// <param name="type">Receives the existing resolved type when available.</param>
+    /// <returns><see langword="true"/> when the native class is already represented.</returns>
+    public bool TryGetTypeByClassAddress(nint classAddress, out ResolvedType? type)
+    {
+        if (classAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(classAddress), "The IL2CPP class address cannot be zero.");
+
+        return _typesByClassAddress.TryGetValue(classAddress, out type);
     }
 
     /// <summary>Attempts to retrieve a cached method resolution.</summary>
@@ -93,7 +147,30 @@ internal sealed class ResolutionCache
     public void StoreMethod(ResolvedMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
-        _methods[BuildMethodKey(method.Query)] = method;
+        CacheMethodQuery(method.Query, method);
+        _methodsByAddress[method.MethodInfoAddress] = method;
+    }
+
+    /// <summary>Associates an additional semantic method query with an already materialized MethodInfo identity.</summary>
+    /// <param name="query">The semantic alias that should resolve to the existing method object.</param>
+    /// <param name="method">The existing resolved method object.</param>
+    public void CacheMethodQuery(MethodQuery query, ResolvedMethod method)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(method);
+        _methods[BuildMethodKey(query)] = method;
+    }
+
+    /// <summary>Attempts to retrieve the public method object already associated with a native MethodInfo identity.</summary>
+    /// <param name="methodInfoAddress">The native <c>MethodInfo*</c> address.</param>
+    /// <param name="method">Receives the existing resolved method when available.</param>
+    /// <returns><see langword="true"/> when the native method is already represented.</returns>
+    public bool TryGetMethodByAddress(nint methodInfoAddress, out ResolvedMethod? method)
+    {
+        if (methodInfoAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(methodInfoAddress), "The IL2CPP MethodInfo address cannot be zero.");
+
+        return _methodsByAddress.TryGetValue(methodInfoAddress, out method);
     }
 
     /// <summary>Attempts to retrieve native method code produced with the exact requested layout.</summary>
@@ -137,7 +214,30 @@ internal sealed class ResolutionCache
     public void StoreField(ResolvedField field)
     {
         ArgumentNullException.ThrowIfNull(field);
-        _fields[BuildFieldKey(field.Query)] = field;
+        CacheFieldQuery(field.Query, field);
+        _fieldsByAddress[field.FieldInfoAddress] = field;
+    }
+
+    /// <summary>Associates an additional semantic field query with an already materialized FieldInfo identity.</summary>
+    /// <param name="query">The semantic alias that should resolve to the existing field object.</param>
+    /// <param name="field">The existing resolved field object.</param>
+    public void CacheFieldQuery(FieldQuery query, ResolvedField field)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(field);
+        _fields[BuildFieldKey(query)] = field;
+    }
+
+    /// <summary>Attempts to retrieve the public field object already associated with a native FieldInfo identity.</summary>
+    /// <param name="fieldInfoAddress">The native <c>FieldInfo*</c> address.</param>
+    /// <param name="field">Receives the existing resolved field when available.</param>
+    /// <returns><see langword="true"/> when the native field is already represented.</returns>
+    public bool TryGetFieldByAddress(nint fieldInfoAddress, out ResolvedField? field)
+    {
+        if (fieldInfoAddress == 0)
+            throw new ArgumentOutOfRangeException(nameof(fieldInfoAddress), "The IL2CPP FieldInfo address cannot be zero.");
+
+        return _fieldsByAddress.TryGetValue(fieldInfoAddress, out field);
     }
 
     /// <summary>Attempts to retrieve layout-based field storage produced with the exact requested class layout.</summary>
@@ -190,8 +290,12 @@ internal sealed class ResolutionCache
         _assemblies.Clear();
         _types.Clear();
         _methods.Clear();
-        _methodCodes.Clear();
         _fields.Clear();
+        _assembliesByImageAddress.Clear();
+        _typesByClassAddress.Clear();
+        _methodsByAddress.Clear();
+        _fieldsByAddress.Clear();
+        _methodCodes.Clear();
         _fieldStorages.Clear();
         _runtimeFieldStorages.Clear();
     }

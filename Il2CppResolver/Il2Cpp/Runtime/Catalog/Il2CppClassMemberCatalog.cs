@@ -1,4 +1,5 @@
-using UnityIl2CppResolver.Il2Cpp.Runtime.Model;
+using RuntimeFieldInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppFieldInfo;
+using RuntimeMethodInfo = UnityIl2CppResolver.Il2Cpp.Runtime.Model.Il2CppMethodInfo;
 
 namespace UnityIl2CppResolver.Il2Cpp.Runtime.Catalog;
 
@@ -52,12 +53,12 @@ internal sealed class Il2CppClassMemberCatalog
     /// <summary>
     /// Stores complete runtime method descriptions already required by semantic overload resolution.
     /// </summary>
-    private readonly Dictionary<nint, Il2CppMethodInfo> _methodInfos = new();
+    private readonly Dictionary<nint, RuntimeMethodInfo> _methodInfos = new();
 
     /// <summary>
     /// Stores complete runtime field descriptions already required by semantic field resolution.
     /// </summary>
-    private readonly Dictionary<nint, Il2CppFieldInfo> _fieldInfos = new();
+    private readonly Dictionary<nint, RuntimeFieldInfo> _fieldInfos = new();
 
     /// <summary>
     /// Initializes a class-member catalogue for one runtime class.
@@ -109,9 +110,9 @@ internal sealed class Il2CppClassMemberCatalog
     /// </summary>
     /// <param name="methodAddress">The native <c>MethodInfo*</c> to inspect.</param>
     /// <returns>The cached or newly inspected runtime method description.</returns>
-    public Il2CppMethodInfo GetMethodInfo(nint methodAddress)
+    public RuntimeMethodInfo GetMethodInfo(nint methodAddress)
     {
-        if (_methodInfos.TryGetValue(methodAddress, out Il2CppMethodInfo? method))
+        if (_methodInfos.TryGetValue(methodAddress, out RuntimeMethodInfo? method))
             return method;
 
         EnsureMethodIndex();
@@ -119,6 +120,58 @@ internal sealed class Il2CppClassMemberCatalog
         method = _runtime.GetMethodInfo(methodAddress, name, _callTimeout);
         _methodInfos.Add(methodAddress, method);
         return method;
+    }
+
+    /// <summary>
+    /// Gets every field address declared by this class without forcing complete field inspection.
+    /// </summary>
+    /// <returns>An immutable snapshot of the declared <c>FieldInfo*</c> addresses.</returns>
+    public IReadOnlyList<nint> GetFieldAddresses()
+    {
+        if (_fieldAddresses is null)
+            _fieldAddresses = _runtime.GetFields(_classAddress, _callTimeout);
+
+        return _fieldAddresses;
+    }
+
+    /// <summary>Gets complete runtime descriptions for every method declared by this class.</summary>
+    /// <returns>Every declared method with its complete semantic signature.</returns>
+    public IReadOnlyList<RuntimeMethodInfo> GetMethods()
+    {
+        IReadOnlyList<nint> addresses = GetMethodAddresses();
+        List<RuntimeMethodInfo> methods = new(addresses.Count);
+
+        foreach (nint address in addresses)
+            methods.Add(GetMethodInfo(address));
+
+        return methods.AsReadOnly();
+    }
+
+    /// <summary>Gets complete runtime descriptions for every overload matching the exact requested method name.</summary>
+    /// <param name="name">The exact managed method name.</param>
+    /// <returns>Every matching overload with its complete semantic signature.</returns>
+    public IReadOnlyList<RuntimeMethodInfo> GetMethods(string name)
+    {
+        IReadOnlyList<nint> addresses = FindMethods(name);
+        List<RuntimeMethodInfo> methods = new(addresses.Count);
+
+        foreach (nint address in addresses)
+            methods.Add(GetMethodInfo(address));
+
+        return methods.AsReadOnly();
+    }
+
+    /// <summary>Gets complete runtime descriptions for every field declared by this class.</summary>
+    /// <returns>Every declared field with semantic type, attributes and storage offset.</returns>
+    public IReadOnlyList<RuntimeFieldInfo> GetFields()
+    {
+        IReadOnlyList<nint> addresses = GetFieldAddresses();
+        List<RuntimeFieldInfo> fields = new(addresses.Count);
+
+        foreach (nint address in addresses)
+            fields.Add(GetFieldInfo(address));
+
+        return fields.AsReadOnly();
     }
 
     /// <summary>
@@ -138,9 +191,9 @@ internal sealed class Il2CppClassMemberCatalog
     /// </summary>
     /// <param name="fieldAddress">The native <c>FieldInfo*</c> to inspect.</param>
     /// <returns>The cached or newly inspected runtime field description.</returns>
-    public Il2CppFieldInfo GetFieldInfo(nint fieldAddress)
+    public RuntimeFieldInfo GetFieldInfo(nint fieldAddress)
     {
-        if (_fieldInfos.TryGetValue(fieldAddress, out Il2CppFieldInfo? field))
+        if (_fieldInfos.TryGetValue(fieldAddress, out RuntimeFieldInfo? field))
             return field;
 
         EnsureFieldIndex();
@@ -188,10 +241,7 @@ internal sealed class Il2CppClassMemberCatalog
 
         Dictionary<string, List<nint>> index = new(StringComparer.Ordinal);
 
-        if (_fieldAddresses is null)
-            _fieldAddresses = _runtime.GetFields(_classAddress, _callTimeout);
-
-        IReadOnlyList<nint> fields = _fieldAddresses;
+        IReadOnlyList<nint> fields = GetFieldAddresses();
 
         foreach (nint fieldAddress in fields)
         {
