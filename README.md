@@ -1084,11 +1084,11 @@ property.ReadStaticBlittable<T>();
 
 Getter invocation deliberately supports only non-indexed/parameterless accessors in this version. Indexers, setters, arbitrary arguments, and general `ResolvedMethod.Invoke(...)` remain outside the public API.
 
-Instance getter invocation validates the supplied object header, resolves its concrete runtime class, checks assignability to the property declaring type, and resolves virtual dispatch through `il2cpp_object_get_virtual_method` before invocation. Value-type declaring instances are intentionally unsupported.
+Instance getter invocation first validates that the supplied object header is readable, then creates a temporary strong GC handle and resolves the protected object back through `il2cpp_gchandle_get_target`. Runtime class validation, assignability checks, virtual dispatch through `il2cpp_object_get_virtual_method`, and the managed call all use that rooted object. The temporary instance root is released after completed object-sensitive runtime operations and never enters the session retained-result table. If completion of object-class inspection, virtual dispatch, or managed invocation cannot be proven, the root is intentionally abandoned because the target thread may still depend on the instance. Value-type declaring instances are intentionally unsupported.
 
 The remote invocation thread is attached to the active IL2CPP domain only for the managed call and detached afterward. A managed exception reported through the `Il2CppException**` output becomes `Il2CppInvocationException`, which exposes the remote exception object identity without attempting to marshal it.
 
-Non-null getter results are rooted with a strong IL2CPP GC handle before the invocation thread detaches. The resolver treats `Il2CppGCHandle` as an opaque pointer-sized value and preserves the complete native return register; this remains compatible with older runtimes whose GC-handle API returned a 32-bit identifier while supporting newer Unity runtimes where the public API uses the opaque `Il2CppGCHandle` type. Scalar, enum, string, and blittable results release that root after local decoding through the native `il2cpp_gchandle_free` API; GC-handle cleanup does not create a second attached IL2CPP thread. Raw reference and `ResolvedArray` results retain their roots until `ClearCache()` or resolver disposal so the target object cannot be collected immediately after the getter returns. If GC-handle cleanup cannot be completed safely, the handle is intentionally abandoned rather than retried blindly.
+Non-null getter results are rooted with a strong IL2CPP GC handle before the invocation thread detaches. The resolver treats `Il2CppGCHandle` as an opaque pointer-sized value and preserves the complete native return register; this remains compatible with older runtimes whose GC-handle API returned a 32-bit identifier while supporting newer Unity runtimes where the public API uses the opaque `Il2CppGCHandle` type. Scalar, enum, string, and blittable results release that root after local decoding through the native `il2cpp_gchandle_free` API; GC-handle cleanup does not create a second attached IL2CPP thread. Raw reference and `ResolvedArray` results retain their roots until `ClearCache()` or resolver disposal so the target object cannot be collected immediately after the getter returns. If result decoding already failed, a later cleanup failure is suppressed so it cannot replace the primary error. If any GC-handle cleanup cannot be completed safely, the handle is intentionally abandoned rather than retried blindly.
 
 > **Important:** a property read executes managed target code. A getter may allocate, mutate state, take locks, raise an exception, or perform arbitrary application logic. This API is therefore more invasive than reading a field from validated memory.
 
@@ -1869,7 +1869,7 @@ If this capability is unavailable, assembly/type/method/field resolution remains
 
 ## Optional property getter invocation
 
-Property value reading additionally requires:
+Property value reading requires the following base invocation exports:
 
 ```text
 il2cpp_runtime_invoke
@@ -1884,7 +1884,13 @@ il2cpp_gchandle_new
 il2cpp_gchandle_free
 ```
 
-These exports remain optional. Missing invocation support does not affect property navigation or any semantic resolver operation; only property value reads throw `NotSupportedException`. Returned managed objects are strongly rooted before the temporary invocation thread detaches.
+Instance getters additionally require:
+
+```text
+il2cpp_gchandle_get_target
+```
+
+These exports remain optional. Missing invocation support does not affect property navigation or any semantic resolver operation; only the affected property value reads throw `NotSupportedException`. Returned managed objects are strongly rooted before the temporary invocation thread detaches. Instance getters use `il2cpp_gchandle_get_target` so the caller-supplied object can be rooted before class validation and virtual dispatch; static getter invocation remains independent of that instance-only operation.
 
 ---
 
