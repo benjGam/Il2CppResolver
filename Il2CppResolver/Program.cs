@@ -725,8 +725,12 @@ public static class Program
             {
                 string value = ReadPropertyScalarAsText(instanceScalar, settingsAddress);
                 Console.WriteLine($"Instance scalar:{instanceScalar.TypeName} {instanceScalar.Query.Name} = {value}");
+                _ = ReadPropertyScalarAsText(instanceScalar, settingsAddress);
+                _ = ReadPropertyScalarAsText(instanceScalar, settingsAddress);
+                Console.WriteLine("Repeated rooted instance invocation: OK");
                 RequirePropertyScalarTypeMismatchRejected(instanceScalar, settingsAddress, false);
                 RequireStaticPropertyScalarRejected(instanceScalar);
+                RequireNullPropertyInstanceRejected(instanceScalar);
             }
             else
                 Console.WriteLine("No supported instance scalar property was found on InputSettings; instance getter test skipped.");
@@ -830,6 +834,30 @@ public static class Program
             case "System.Double": RequireThrows<InvalidOperationException>(() => property.ReadStatic<double>(), "Instance Double property was accepted as static."); break;
             case "System.IntPtr": RequireThrows<InvalidOperationException>(() => property.ReadStatic<nint>(), "Instance IntPtr property was accepted as static."); break;
             case "System.UIntPtr": RequireThrows<InvalidOperationException>(() => property.ReadStatic<nuint>(), "Instance UIntPtr property was accepted as static."); break;
+            default: throw new InvalidOperationException($"Unsupported scalar property type '{property.TypeName}'.");
+        }
+    }
+
+    /// <summary>Verifies that an instance scalar property rejects a null managed instance before runtime invocation.</summary>
+    /// <param name="property">The instance scalar property under test.</param>
+    private static void RequireNullPropertyInstanceRejected(ResolvedProperty property)
+    {
+        switch (property.TypeName)
+        {
+            case "System.Boolean": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<bool>(0), "Instance Boolean property accepted a null managed instance."); break;
+            case "System.Char": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<char>(0), "Instance Char property accepted a null managed instance."); break;
+            case "System.SByte": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<sbyte>(0), "Instance SByte property accepted a null managed instance."); break;
+            case "System.Byte": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<byte>(0), "Instance Byte property accepted a null managed instance."); break;
+            case "System.Int16": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<short>(0), "Instance Int16 property accepted a null managed instance."); break;
+            case "System.UInt16": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<ushort>(0), "Instance UInt16 property accepted a null managed instance."); break;
+            case "System.Int32": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<int>(0), "Instance Int32 property accepted a null managed instance."); break;
+            case "System.UInt32": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<uint>(0), "Instance UInt32 property accepted a null managed instance."); break;
+            case "System.Int64": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<long>(0), "Instance Int64 property accepted a null managed instance."); break;
+            case "System.UInt64": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<ulong>(0), "Instance UInt64 property accepted a null managed instance."); break;
+            case "System.Single": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<float>(0), "Instance Single property accepted a null managed instance."); break;
+            case "System.Double": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<double>(0), "Instance Double property accepted a null managed instance."); break;
+            case "System.IntPtr": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<nint>(0), "Instance IntPtr property accepted a null managed instance."); break;
+            case "System.UIntPtr": RequireThrows<ArgumentOutOfRangeException>(() => property.Read<nuint>(0), "Instance UIntPtr property accepted a null managed instance."); break;
             default: throw new InvalidOperationException($"Unsupported scalar property type '{property.TypeName}'.");
         }
     }
