@@ -104,7 +104,7 @@ The current implementation is runtime-backed: it discovers and calls exported IL
 - Resolve properties by exact name and ordered index-parameter type names.
 - Enumerate properties and reuse getter/setter methods through the runtime identity map.
 - Resolve fields and classify their runtime storage kind.
-- Read explicitly supported scalar, enum, and managed-reference field values with runtime type and storage-bound validation.
+- Read explicitly supported scalar, enum, managed-reference, managed-string, vector-array, and blittable value-type field values with runtime type and storage-bound validation.
 - Navigate parent types, interfaces, nested types, and declaring types through session-bound resolved objects.
 - Inspect cached type and method metadata including attributes, tokens, generic state, value-type size/alignment, and method implementation flags.
 - Map `MethodInfo*` to validated executable native code through explicit or automatically detected layouts.
@@ -139,6 +139,7 @@ Some features are capability-based rather than attachment requirements:
 - Property navigation and `ResolveProperty(...)` require the optional public IL2CPP property exports.
 - Runtime-API static-field storage requires both optional static-storage exports.
 - Safe field-value reading requires the optional IL2CPP type-classification APIs; instance reads additionally require class instance-size inspection.
+- Managed string decoding, vector-array inspection, and blittable value-type reads each depend on their own optional runtime exports and fail independently when unavailable.
 - Type relationships require the corresponding optional class relationship exports and class identity APIs when a related type is materialized.
 - Type and method metadata inspection require their optional metadata exports.
 - Assembly/type/method/field resolution can continue to work when those optional capabilities are absent.
@@ -323,6 +324,7 @@ ResolvedType
 ResolvedMethod
 ResolvedProperty
 ResolvedField
+ResolvedArray
 ```
 
 They expose immutable runtime identity information and are bound to the resolver session that produced them.
@@ -352,7 +354,16 @@ ResolvedProperty
     └── Setter → ResolvedMethod?
 
 ResolvedField
-    └── ResolveStorage(...)
+    ├── ResolveStorage(...)
+    ├── Read* / ReadStatic*(...)
+    └── ReadArray / ReadStaticArray(...) → ResolvedArray?
+
+ResolvedArray
+    ├── Read<T>(index)
+    ├── ReadEnum<TEnum>(index)
+    ├── ReadReference(index)
+    ├── ReadString(index)
+    └── ReadBlittable<T>(index)
 ```
 
 The runtime logic remains centralized in the owning resolver session; resolved entities are navigation handles, not independent runtime backends.
@@ -1109,7 +1120,7 @@ The current concrete field-storage resolver intentionally supports only normal `
 
 ## Field Value Reading
 
-`ResolvedField` can read a deliberately conservative set of values directly from validated runtime storage.
+`ResolvedField` can read a deliberately conservative set of values directly from validated runtime storage. Value reading is separate from semantic field resolution: resolving a field does not inspect or read its current value until one of the explicit `Read*` endpoints is called.
 
 ### Static managed references
 
@@ -1155,6 +1166,71 @@ MyMatchingEnum staticValue = staticEnumField.ReadStaticEnum<MyMatchingEnum>();
 
 The managed enum name and underlying scalar type must match the runtime IL2CPP enum.
 
+### Managed strings
+
+String reads preserve the distinction between a null reference and an empty managed string:
+
+```csharp
+string? staticText = staticStringField.ReadStaticString();
+string? instanceText = instanceStringField.ReadString(objectAddress);
+```
+
+The reader uses the public IL2CPP string APIs to retrieve the current UTF-16 length and character buffer, applies a defensive character-count limit, validates the complete remote character range, and only then allocates and decodes the local .NET string.
+
+```text
+null Il2CppString* → null
+length == 0       → string.Empty
+otherwise         → validated UTF-16 decode
+```
+
+### Managed arrays (`ResolvedArray`)
+
+Normal static and instance fields whose runtime type is an IL2CPP single-dimensional zero-based array (`SZARRAY`) can be inspected without eagerly materializing a local `T[]`:
+
+```csharp
+ResolvedArray? staticArray = staticArrayField.ReadStaticArray();
+ResolvedArray? instanceArray = instanceArrayField.ReadArray(objectAddress);
+```
+
+A non-null `ResolvedArray` exposes immutable shape/type information and generation-aware element reads:
+
+```csharp
+Console.WriteLine(array.Address);
+Console.WriteLine(array.Length);
+Console.WriteLine(array.ElementTypeName);
+
+int number = array.Read<int>(index);
+MyMatchingEnum state = array.ReadEnum<MyMatchingEnum>(index);
+nint reference = array.ReadReference(index);
+string? text = array.ReadString(index);
+MyMatchingBlittable value = array.ReadBlittable<MyMatchingBlittable>(index);
+```
+
+Every element read validates the index, exact runtime element type, runtime-reported element-slot size, calculated address, and complete memory range. Multidimensional arrays are deliberately rejected. Jagged arrays remain ordinary vectors whose elements are managed array references.
+
+The current Windows x64 implementation uses the stable `Il2CppArray` vector payload offset `0x20` only after cross-validating the live array's public IL2CPP-reported element count, payload byte length, array element class/type, and element size. This is an explicit structural assumption rather than a new public layout contract.
+
+### Blittable value types
+
+Arbitrary `unmanaged` types are **not** accepted by `Read<T>()`. Blittable structs use an explicit API:
+
+```csharp
+MyMatchingBlittable staticValue = valueField.ReadStaticBlittable<MyMatchingBlittable>();
+MyMatchingBlittable instanceValue = valueField.ReadBlittable<MyMatchingBlittable>(objectAddress);
+```
+
+A blittable read is accepted only when all of the following are true:
+
+```text
+IL2CPP type is a non-enum value type
++ IL2CPP reports the class as blittable
++ runtime value size is positive
++ sizeof(T) exactly matches the IL2CPP value size
++ managed T semantic full name matches the IL2CPP type name
+```
+
+The resolver does not perform managed marshalling or field-by-field structural conversion. It copies the already validated native bytes into the matching unmanaged local representation. Primitive scalars and enums must continue to use their dedicated APIs.
+
 ### Supported scalar types
 
 The conservative scalar surface currently supports:
@@ -1169,12 +1245,12 @@ float, double
 nint, nuint
 ```
 
-Arbitrary unmanaged structs are rejected. The reader validates:
+For all direct field reads, the reader validates:
 
 ```text
 field storage kind
 + runtime Il2CppType category
-+ exact managed scalar type
++ exact requested representation
 + static/instance storage bounds
 + complete remote memory readability
 ```
@@ -1334,6 +1410,8 @@ The current cache/catalogue layers include:
 - lazily inspected method descriptions;
 - lazily inspected field descriptions;
 - IL2CPP type-name cache;
+- runtime type descriptors and class metadata;
+- array element type and element-size descriptors;
 - semantic query results;
 - runtime identity maps;
 - layout-sensitive native method mappings;
@@ -1455,7 +1533,7 @@ ResolvedType refreshed = resolver.ResolveType(typeQuery);
 
 The refreshed result belongs to the new cache generation.
 
-This prevents a previously resolved `Il2CppClass*`, `MethodInfo*`, `PropertyInfo*`, `FieldInfo*`, or image identity from being silently reused after the caller explicitly requested runtime cache invalidation.
+This prevents a previously resolved `Il2CppClass*`, `MethodInfo*`, `PropertyInfo*`, `FieldInfo*`, image identity, or session-bound `ResolvedArray` from being silently reused after the caller explicitly requested runtime cache invalidation.
 
 ---
 
@@ -1588,9 +1666,10 @@ Il2CppTypeCatalog
       ↓
 FieldValueTypeValidator
       ↓
-range + readability validation
-      ↓
-ProcessMemory.Read<T>()
+      ├── scalar / enum / reference → ProcessMemory.Read<T>()
+      ├── System.String            → Il2CppStringReader
+      ├── SZARRAY                  → Il2CppArrayReader → ResolvedArray
+      └── blittable value type     → exact metadata/size/name validation
 ```
 
 Type relationships and metadata are lazy catalogue operations:
@@ -1758,6 +1837,25 @@ Instance field reads also require the runtime class instance-size API so the com
 
 If the required exports are unavailable, the affected read endpoint throws `NotSupportedException`; normal semantic field resolution remains available.
 
+Managed string decoding additionally requires:
+
+```text
+il2cpp_string_length
+il2cpp_string_chars
+```
+
+Vector-array inspection additionally requires:
+
+```text
+il2cpp_array_length
+il2cpp_array_get_byte_length
+il2cpp_array_element_size
+il2cpp_class_get_element_class
+il2cpp_class_get_type
+```
+
+Conservative blittable reads additionally require complete type metadata including IL2CPP blittable classification and value size/alignment. These feature groups remain optional and do not make `Attach()` stricter.
+
 ## Optional type relationships and metadata
 
 Parent, interface, nested-type, and declaring-type endpoints depend only on the specific relationship export they use. Materializing a related type additionally requires IL2CPP class image/name/namespace APIs.
@@ -1768,9 +1866,8 @@ Parent, interface, nested-type, and declaring-type endpoints depend only on the 
 
 The current implementation deliberately does **not** provide:
 
-- Arbitrary unmanaged-struct field reads.
-- Managed string decoding through the field reader.
-- Array materialization.
+- Unvalidated arbitrary unmanaged-struct reads; only explicitly matching blittable value types are accepted.
+- Multidimensional array inspection or eager local `T[]` materialization.
 - Unboxed value-type instance field addressing.
 - `ThreadStatic` value resolution.
 - Literal constant retrieval.
@@ -1790,6 +1887,8 @@ Known boundaries include:
 - A resolved native method address does not guarantee ABI-safe invocation.
 - Automatic MethodInfo detection depends on enough method evidence from the declaring type.
 - Automatic Il2CppClass detection requires consumer-provided normal static-field evidence across multiple classes.
+- Array payload addressing currently assumes the validated Windows x64 `Il2CppArray` vector offset `0x20`; public runtime APIs are used to cross-check array shape and payload size before that structural offset is consumed.
+- Managed strings are bounded by a defensive maximum character count before local allocation.
 - Some navigation endpoints depend on optional target exports.
 - Semantic modeling of advanced generic/nested-type identity may be extended later.
 - Layout catalogues intentionally cover explicit known structures rather than pretending every Unity/IL2CPP generation shares one layout.
@@ -1798,7 +1897,7 @@ Known boundaries include:
 
 # Complete Example
 
-The following example demonstrates configuration, navigation, exact overload resolution, metadata inspection, type relationships, native method-code mapping, field resolution, safe field-value reading, static-field storage, enumeration, and cache invalidation.
+The following example demonstrates configuration, navigation, exact overload resolution, metadata inspection, type relationships, native method-code mapping, field resolution, safe reference field reading, static-field storage, enumeration, and cache invalidation. Specialized string, array, scalar, enum, and blittable reads use the same `ResolvedField` APIs documented above.
 
 ```csharp
 using UnityIl2CppResolver.Il2Cpp;
@@ -1931,12 +2030,16 @@ The current resolver has been exercised against a live IL2CPP target with valida
 - field enumeration and targeted field identity;
 - MethodInfo → native code validation;
 - static-field base + offset mapping;
+- exact scalar and managed-reference field reads;
+- managed-string decoding when a suitable live field is available;
+- vector-array inspection, element typing and bounds rejection when a suitable live field is available;
+- explicit rejection of scalar misuse through the blittable-structure API;
 - configured layouts;
 - one-shot layout overrides;
 - resolver-level and navigation-level parity;
 - identity-map reuse;
 - repeated navigation/cache reuse;
-- cache-generation invalidation;
+- cache-generation invalidation, including stale field reads and stale `ResolvedArray` wrappers;
 - persistence of explicit layout configuration across `ClearCache()`.
 
 Integration tests should continue to distinguish functional assertions from timing observations. Cache correctness is primarily validated through stable identity and result reuse rather than assuming a particular wall-clock duration.
@@ -1947,10 +2050,11 @@ Integration tests should continue to distinguish functional assertions from timi
 
 Potential future work includes:
 
-- Managed string and array inspection.
-- Safe blittable-struct reading with explicit runtime size/layout validation.
+- Controlled property getter invocation and property value reading, initially for parameterless getters through a dedicated invocation layer.
 - Thread-static storage resolution.
 - Literal constant retrieval.
 - Richer generic and nested semantic identities.
 - Additional navigation and metadata endpoints.
-- A separate, explicitly designed managed invocation layer only after thread attachment, GC, exception, ABI, and marshalling requirements are modeled safely.
+- A separate, explicitly designed general managed invocation layer only after thread attachment, GC, exception, ABI, boxing/unboxing, and argument marshalling requirements are modeled safely.
+
+Field writes and property setters are intentionally deferred to a later stage.
