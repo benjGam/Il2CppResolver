@@ -65,6 +65,9 @@ public static class Program
         ResolvedProperty property = TestPropertyNavigation(resolver, type);
         ResolvedField field = TestFieldNavigation(resolver, type);
         TestFieldStorageNavigation(resolver, field);
+        TestTypeRelationships(resolver, assembly, type);
+        TestMetadata(assembly, type, method);
+        TestFieldValueReading(assembly, field);
         TestIdentityMap(resolver, assembly, type, method, property, field);
         TestRepeatedNavigation(assembly, type);
         TestCacheInvalidation(resolver, assembly, type, method, property, field);
@@ -433,6 +436,249 @@ public static class Program
     }
 
     /// <summary>
+    /// Validates parent, interface, nested-type and declaring-type navigation together with resolved-type identity reuse.
+    /// </summary>
+    /// <param name="resolver">The active resolver session.</param>
+    /// <param name="assembly">The resolved Unity Input System assembly.</param>
+    /// <param name="type">The resolved top-level InputSystem type.</param>
+    private static void TestTypeRelationships(Il2CppResolver resolver, ResolvedAssembly assembly, ResolvedType type)
+    {
+        Section("Type relationships");
+
+        ResolvedType? baseType = type.GetBaseType();
+        Require(baseType is not null, "InputSystem did not expose a base type.");
+
+        ResolvedType baseTypeAgain = resolver.ResolveType(baseType.Query);
+        Require(ReferenceEquals(baseType, baseTypeAgain), "Base-type navigation did not reuse the resolved-type identity map.");
+
+        IReadOnlyList<ResolvedType> interfaces = type.GetInterfaces();
+        IReadOnlyList<ResolvedType> nestedTypes = type.GetNestedTypes();
+        ResolvedType? declaringType = type.GetDeclaringType();
+
+        Require(declaringType is null, "Top-level InputSystem unexpectedly reports a declaring type.");
+
+        foreach (ResolvedType interfaceType in interfaces)
+        {
+            ResolvedType interfaceAgain = resolver.ResolveType(interfaceType.Query);
+            Require(ReferenceEquals(interfaceType, interfaceAgain), $"Interface '{interfaceType.Query.Name}' did not reuse the resolved-type identity map.");
+        }
+
+        foreach (ResolvedType nestedType in nestedTypes)
+        {
+            ResolvedType? nestedDeclaringType = nestedType.GetDeclaringType();
+            Require(nestedDeclaringType is not null, $"Nested type '{nestedType.Query.Name}' does not expose a declaring type.");
+            Require(ReferenceEquals(type, nestedDeclaringType), $"Nested type '{nestedType.Query.Name}' did not resolve back to InputSystem as its declaring type.");
+        }
+
+        Console.WriteLine($"Base type:    {baseType.Query.Namespace}.{baseType.Query.Name}");
+        Console.WriteLine($"Interfaces:   {interfaces.Count}");
+        Console.WriteLine($"Nested types: {nestedTypes.Count}");
+        Console.WriteLine("Declaring:    <none>");
+        Console.WriteLine("Identity:     OK");
+
+        if (interfaces.Count > 0)
+            Console.WriteLine($"First interface: {interfaces[0].Query.Namespace}.{interfaces[0].Query.Name}");
+
+        if (nestedTypes.Count > 0)
+            Console.WriteLine($"First nested:    {nestedTypes[0].Query.Namespace}.{nestedTypes[0].Query.Name}");
+
+        Pass();
+    }
+
+    /// <summary>
+    /// Validates lazy type and method metadata inspection, cached snapshot reuse and value-type/enum classification on known Input System types.
+    /// </summary>
+    /// <param name="assembly">The resolved Unity Input System assembly.</param>
+    /// <param name="type">The resolved InputSystem type.</param>
+    /// <param name="method">The resolved QueueEvent method.</param>
+    private static void TestMetadata(ResolvedAssembly assembly, ResolvedType type, ResolvedMethod method)
+    {
+        Section("Type and method metadata");
+
+        ResolvedTypeMetadata typeMetadata = type.GetMetadata();
+        ResolvedTypeMetadata typeMetadataAgain = type.GetMetadata();
+        ResolvedMethodMetadata methodMetadata = method.GetMetadata();
+        ResolvedMethodMetadata methodMetadataAgain = method.GetMetadata();
+
+        Require(ReferenceEquals(typeMetadata, typeMetadataAgain), "Repeated type metadata inspection did not reuse the cached public snapshot.");
+        Require(ReferenceEquals(methodMetadata, methodMetadataAgain), "Repeated method metadata inspection did not reuse the cached public snapshot.");
+        Require(methodMetadata.IsStatic, "InputSystem.QueueEvent is expected to be static.");
+
+        ResolvedType inputEventPtr = assembly.ResolveType("UnityEngine.InputSystem.LowLevel", "InputEventPtr");
+        ResolvedTypeMetadata inputEventPtrMetadata = inputEventPtr.GetMetadata();
+        Require(inputEventPtrMetadata.IsValueType, "InputEventPtr is expected to be a value type.");
+        Require(inputEventPtrMetadata.ValueSize is > 0, "InputEventPtr value metadata did not expose a positive value size.");
+
+        ResolvedType inputActionPhase = assembly.ResolveType("UnityEngine.InputSystem", "InputActionPhase");
+        ResolvedTypeMetadata inputActionPhaseMetadata = inputActionPhase.GetMetadata();
+        Require(inputActionPhaseMetadata.IsEnum, "InputActionPhase is expected to be an enum.");
+        Require(inputActionPhaseMetadata.IsValueType, "InputActionPhase enum is expected to be a value type.");
+
+        Console.WriteLine($"InputSystem token:      0x{typeMetadata.MetadataToken:X8}");
+        Console.WriteLine($"InputSystem attributes: {typeMetadata.Attributes}");
+        Console.WriteLine($"QueueEvent token:       0x{methodMetadata.MetadataToken:X8}");
+        Console.WriteLine($"QueueEvent attributes:  {methodMetadata.Attributes}");
+        Console.WriteLine($"QueueEvent static:      {methodMetadata.IsStatic}");
+        Console.WriteLine($"InputEventPtr size:     0x{inputEventPtrMetadata.ValueSize!.Value:X}");
+        Console.WriteLine($"InputEventPtr align:    0x{inputEventPtrMetadata.ValueAlignment!.Value:X}");
+        Console.WriteLine($"InputActionPhase enum:  {inputActionPhaseMetadata.IsEnum}");
+        Console.WriteLine("Metadata cache:         OK");
+
+        Pass();
+    }
+
+    /// <summary>
+    /// Validates safe static-reference reading from <c>s_Manager</c>, then selects one supported scalar instance field from <c>InputManager</c> and reads it through exact runtime type validation.
+    /// </summary>
+    /// <param name="assembly">The resolved Unity Input System assembly.</param>
+    /// <param name="managerField">The resolved <c>InputSystem.s_Manager</c> static field.</param>
+    private static void TestFieldValueReading(ResolvedAssembly assembly, ResolvedField managerField)
+    {
+        Section("Field value reading");
+
+        nint managerAddress = managerField.ReadStaticReference();
+        nint managerAddressOverride = managerField.ReadStaticReference(Il2CppClassLayouts.Class29_2X64);
+
+        Require(managerAddress != 0, "s_Manager resolved to a null InputManager reference.");
+        Require(managerAddress == managerAddressOverride, "Configured and one-shot layout paths returned different s_Manager references.");
+
+        Console.WriteLine($"InputManager*: 0x{managerAddress:X}");
+        Console.WriteLine("Static reference: OK");
+
+        ResolvedField? staticScalarField = managerField.DeclaringType.GetFields().FirstOrDefault(field => field.StorageKind == FieldStorageKind.Static && IsSupportedScalarFieldType(field.TypeName));
+
+        if (staticScalarField is not null)
+        {
+            string staticValue = ReadStaticScalarAsText(staticScalarField);
+            Console.WriteLine($"Static scalar: {staticScalarField.TypeName} {staticScalarField.Query.Name} = {staticValue}");
+        }
+        else
+        {
+            Console.WriteLine("No supported static scalar field was found on InputSystem; static scalar read test skipped.");
+        }
+
+        ResolvedType inputManager = assembly.ResolveType("UnityEngine.InputSystem", "InputManager");
+        IReadOnlyList<ResolvedField> fields = inputManager.GetFields();
+        ResolvedField? scalarField = fields.FirstOrDefault(IsSupportedScalarField);
+
+        if (scalarField is null)
+        {
+            Console.WriteLine("No supported scalar instance field was found on InputManager; instance scalar read test skipped.");
+            Pass();
+            return;
+        }
+
+        string value = ReadScalarAsText(scalarField, managerAddress);
+        Console.WriteLine($"Instance field: {scalarField.TypeName} {scalarField.Query.Name}");
+        Console.WriteLine($"Value:          {value}");
+
+        RequireThrows<InvalidOperationException>(
+            () => ReadDeliberatelyWrongScalar(scalarField, managerAddress),
+            "A deliberately incompatible managed scalar type was accepted for an instance field read.");
+
+        Console.WriteLine("Exact scalar validation: OK");
+        Console.WriteLine("Type mismatch rejection: OK");
+        Pass();
+    }
+
+    /// <summary>Determines whether a resolved field is an instance field whose semantic type belongs to the conservative scalar reader surface.</summary>
+    /// <param name="field">The resolved field to inspect.</param>
+    /// <returns><see langword="true"/> when the field can be exercised by the generic scalar integration test.</returns>
+    private static bool IsSupportedScalarField(ResolvedField field)
+    {
+        if (field.StorageKind != FieldStorageKind.Instance)
+            return false;
+
+        return IsSupportedScalarFieldType(field.TypeName);
+    }
+
+    /// <summary>Determines whether a semantic field type belongs to the conservative scalar reader surface.</summary>
+    /// <param name="typeName">The exact semantic managed type name.</param>
+    /// <returns><see langword="true"/> when the type is supported by scalar field reading.</returns>
+    private static bool IsSupportedScalarFieldType(string typeName)
+    {
+        return typeName is "System.Boolean" or
+               "System.Char" or
+               "System.SByte" or
+               "System.Byte" or
+               "System.Int16" or
+               "System.UInt16" or
+               "System.Int32" or
+               "System.UInt32" or
+               "System.Int64" or
+               "System.UInt64" or
+               "System.Single" or
+               "System.Double" or
+               "System.IntPtr" or
+               "System.UIntPtr";
+    }
+
+    /// <summary>Reads one supported scalar static field and formats its value through the public generic field API.</summary>
+    /// <param name="field">The supported scalar static field.</param>
+    /// <returns>The formatted scalar value.</returns>
+    private static string ReadStaticScalarAsText(ResolvedField field)
+    {
+        return field.TypeName switch
+        {
+            "System.Boolean" => field.ReadStatic<bool>().ToString(),
+            "System.Char" => ((int)field.ReadStatic<char>()).ToString(),
+            "System.SByte" => field.ReadStatic<sbyte>().ToString(),
+            "System.Byte" => field.ReadStatic<byte>().ToString(),
+            "System.Int16" => field.ReadStatic<short>().ToString(),
+            "System.UInt16" => field.ReadStatic<ushort>().ToString(),
+            "System.Int32" => field.ReadStatic<int>().ToString(),
+            "System.UInt32" => field.ReadStatic<uint>().ToString(),
+            "System.Int64" => field.ReadStatic<long>().ToString(),
+            "System.UInt64" => field.ReadStatic<ulong>().ToString(),
+            "System.Single" => field.ReadStatic<float>().ToString("R"),
+            "System.Double" => field.ReadStatic<double>().ToString("R"),
+            "System.IntPtr" => $"0x{field.ReadStatic<nint>():X}",
+            "System.UIntPtr" => $"0x{field.ReadStatic<nuint>():X}",
+            _ => throw new InvalidOperationException($"Unsupported static scalar test field type '{field.TypeName}'.")
+        };
+    }
+
+    /// <summary>Reads one supported scalar instance field and formats the value without bypassing the public generic field API.</summary>
+    /// <param name="field">The supported scalar instance field.</param>
+    /// <param name="instanceAddress">The remote InputManager object address.</param>
+    /// <returns>The formatted scalar value.</returns>
+    private static string ReadScalarAsText(ResolvedField field, nint instanceAddress)
+    {
+        return field.TypeName switch
+        {
+            "System.Boolean" => field.Read<bool>(instanceAddress).ToString(),
+            "System.Char" => ((int)field.Read<char>(instanceAddress)).ToString(),
+            "System.SByte" => field.Read<sbyte>(instanceAddress).ToString(),
+            "System.Byte" => field.Read<byte>(instanceAddress).ToString(),
+            "System.Int16" => field.Read<short>(instanceAddress).ToString(),
+            "System.UInt16" => field.Read<ushort>(instanceAddress).ToString(),
+            "System.Int32" => field.Read<int>(instanceAddress).ToString(),
+            "System.UInt32" => field.Read<uint>(instanceAddress).ToString(),
+            "System.Int64" => field.Read<long>(instanceAddress).ToString(),
+            "System.UInt64" => field.Read<ulong>(instanceAddress).ToString(),
+            "System.Single" => field.Read<float>(instanceAddress).ToString("R"),
+            "System.Double" => field.Read<double>(instanceAddress).ToString("R"),
+            "System.IntPtr" => $"0x{field.Read<nint>(instanceAddress):X}",
+            "System.UIntPtr" => $"0x{field.Read<nuint>(instanceAddress):X}",
+            _ => throw new InvalidOperationException($"Unsupported scalar test field type '{field.TypeName}'.")
+        };
+    }
+
+    /// <summary>Attempts one intentionally incompatible scalar read to verify that runtime type validation rejects size-compatible or arbitrary reinterpretation.</summary>
+    /// <param name="field">The supported scalar instance field.</param>
+    /// <param name="instanceAddress">The remote InputManager object address.</param>
+    private static void ReadDeliberatelyWrongScalar(ResolvedField field, nint instanceAddress)
+    {
+        if (string.Equals(field.TypeName, "System.Int32", StringComparison.Ordinal))
+        {
+            _ = field.Read<float>(instanceAddress);
+            return;
+        }
+
+        _ = field.Read<int>(instanceAddress);
+    }
+
+    /// <summary>
     /// Validates that targeted and navigational resolution paths reuse session-bound public objects by runtime identity.
     /// </summary>
     /// <param name="resolver">The active resolver session.</param>
@@ -555,17 +801,25 @@ public static class Program
 
         RequireThrows<InvalidOperationException>(() => assembly.GetTypes(), "Old ResolvedAssembly remained navigable after ClearCache.");
         RequireThrows<InvalidOperationException>(() => type.GetMethods(), "Old ResolvedType remained navigable after ClearCache.");
+        RequireThrows<InvalidOperationException>(() => type.GetBaseType(), "Old ResolvedType relationship navigation remained usable after ClearCache.");
+        RequireThrows<InvalidOperationException>(() => type.GetMetadata(), "Old ResolvedType metadata inspection remained usable after ClearCache.");
         RequireThrows<InvalidOperationException>(() => method.ResolveCode(), "Old ResolvedMethod remained navigable after ClearCache.");
+        RequireThrows<InvalidOperationException>(() => method.GetMetadata(), "Old ResolvedMethod metadata inspection remained usable after ClearCache.");
         ResolvedMethod? oldPropertyAccessor = property.Getter ?? property.Setter;
         if (oldPropertyAccessor is not null)
             RequireThrows<InvalidOperationException>(() => oldPropertyAccessor.ResolveCode(), "Old property accessor remained navigable after ClearCache.");
         RequireThrows<InvalidOperationException>(() => field.ResolveStorage(), "Old ResolvedField remained navigable after ClearCache.");
+        RequireThrows<InvalidOperationException>(() => field.ReadStaticReference(), "Old ResolvedField value reading remained usable after ClearCache.");
 
         Console.WriteLine("Old assembly rejected: OK");
         Console.WriteLine("Old type rejected:     OK");
+        Console.WriteLine("Old relationships rejected: OK");
+        Console.WriteLine("Old type metadata rejected: OK");
         Console.WriteLine("Old method rejected:   OK");
+        Console.WriteLine("Old method metadata rejected: OK");
         Console.WriteLine("Old property accessor rejected: OK");
         Console.WriteLine("Old field rejected:    OK");
+        Console.WriteLine("Old field value read rejected: OK");
 
         // Snapshot properties remain valid.
         Require(assembly.ImageAddress != 0, "Old assembly snapshot lost its Image*.");
@@ -591,6 +845,10 @@ public static class Program
 
         ResolvedMethodCode refreshedCode = refreshedMethod.ResolveCode();
         ResolvedFieldStorage refreshedStorage = refreshedField.ResolveStorage();
+        ResolvedTypeMetadata refreshedTypeMetadata = refreshedType.GetMetadata();
+        ResolvedMethodMetadata refreshedMethodMetadata = refreshedMethod.GetMetadata();
+        ResolvedType? refreshedBaseType = refreshedType.GetBaseType();
+        nint refreshedManagerAddress = refreshedField.ReadStaticReference();
 
         Require(!ReferenceEquals(type, refreshedType), "ClearCache did not create a new ResolvedType generation.");
         Require(!ReferenceEquals(method, refreshedMethod), "ClearCache did not create a new ResolvedMethod generation.");
@@ -599,10 +857,17 @@ public static class Program
 
         Require(refreshedCode.NativeAddress != 0, "Configured MethodInfo layout was lost after ClearCache.");
         Require(refreshedStorage.StorageAddress != 0, "Configured field-storage layout was lost after ClearCache.");
+        Require(refreshedTypeMetadata.MetadataToken != 0, "Type metadata did not rematerialize after ClearCache.");
+        Require(refreshedMethodMetadata.MetadataToken != 0, "Method metadata did not rematerialize after ClearCache.");
+        Require(refreshedBaseType is not null, "Type relationships did not rematerialize after ClearCache.");
+        Require(refreshedManagerAddress != 0, "Field value reading did not rematerialize after ClearCache.");
 
         Console.WriteLine("New generation created:       OK");
         Console.WriteLine("Method layout survived cache: OK");
         Console.WriteLine("Field layout survived cache:  OK");
+        Console.WriteLine("Metadata rematerialized:      OK");
+        Console.WriteLine("Relationships rematerialized: OK");
+        Console.WriteLine("Field value reading restored: OK");
 
         Pass();
     }
