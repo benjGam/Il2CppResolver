@@ -6,15 +6,14 @@ using UnityIl2CppResolver.Il2Cpp.Results;
 
 /// <summary>
 /// Executes end-to-end integration checks against a live IL2CPP target.
-/// The test validates semantic resolution, navigation endpoints, identity-map reuse,
-/// native method mapping, property resolution, static-field storage mapping, session caching and generation invalidation.
+/// The test validates semantic resolution, navigation endpoints, identity-map reuse, native method mapping, property resolution, static-field storage mapping, safe field-value reading, type metadata, session caching and generation invalidation.
 /// </summary>
 public static class Program
 {
     /// <summary>
-    /// Executes the live resolver integration test against the process identifier supplied on the command line.
+    /// Executes the live resolver integration test against the first running Dofus process.
     /// </summary>
-    /// <param name="args">The command-line arguments. The first argument must contain the target process identifier.</param>
+    /// <param name="args">Command-line arguments are currently ignored by this development harness.</param>
     /// <returns>Zero when every validation succeeds; otherwise a non-zero exit code.</returns>
     public static int Main(string[] args)
     {
@@ -27,7 +26,7 @@ public static class Program
 
             Console.WriteLine();
             Console.WriteLine("========================================");
-            Console.WriteLine("ALL NAVIGATION TESTS PASSED");
+            Console.WriteLine("ALL RESOLVER TESTS PASSED");
             Console.WriteLine("========================================");
 
             return 0;
@@ -67,10 +66,10 @@ public static class Program
         TestFieldStorageNavigation(resolver, field);
         TestTypeRelationships(resolver, assembly, type);
         TestMetadata(assembly, type, method);
-        TestFieldValueReading(assembly, field);
+        ResolvedArray? array = TestFieldValueReading(assembly, field);
         TestIdentityMap(resolver, assembly, type, method, property, field);
         TestRepeatedNavigation(assembly, type);
-        TestCacheInvalidation(resolver, assembly, type, method, property, field);
+        TestCacheInvalidation(resolver, assembly, type, method, property, field, array);
     }
 
     /// <summary>
@@ -528,11 +527,13 @@ public static class Program
     }
 
     /// <summary>
-    /// Validates safe static-reference reading from <c>s_Manager</c>, then selects one supported scalar instance field from <c>InputManager</c> and reads it through exact runtime type validation.
+    /// Validates safe field-value reading for managed references, scalars, strings, vector arrays and conservative blittable-type guards.
+    /// Dynamic field selection keeps the integration test resilient to non-contractual InputManager implementation details.
     /// </summary>
     /// <param name="assembly">The resolved Unity Input System assembly.</param>
     /// <param name="managerField">The resolved <c>InputSystem.s_Manager</c> static field.</param>
-    private static void TestFieldValueReading(ResolvedAssembly assembly, ResolvedField managerField)
+    /// <returns>One non-null array result when the live InputManager exposes a suitable array field; otherwise <see langword="null"/>.</returns>
+    private static ResolvedArray? TestFieldValueReading(ResolvedAssembly assembly, ResolvedField managerField)
     {
         Section("Field value reading");
 
@@ -544,6 +545,15 @@ public static class Program
 
         Console.WriteLine($"InputManager*: 0x{managerAddress:X}");
         Console.WriteLine("Static reference: OK");
+
+        RequireThrows<InvalidOperationException>(
+            () => managerField.ReadStaticString(),
+            "A non-string managed reference was accepted by ReadStaticString.");
+        RequireThrows<InvalidOperationException>(
+            () => managerField.ReadStaticArray(),
+            "A non-array managed reference was accepted by ReadStaticArray.");
+
+        Console.WriteLine("Reference specialization checks: OK");
 
         ResolvedField? staticScalarField = managerField.DeclaringType.GetFields().FirstOrDefault(field => field.StorageKind == FieldStorageKind.Static && IsSupportedScalarFieldType(field.TypeName));
 
@@ -561,24 +571,154 @@ public static class Program
         IReadOnlyList<ResolvedField> fields = inputManager.GetFields();
         ResolvedField? scalarField = fields.FirstOrDefault(IsSupportedScalarField);
 
-        if (scalarField is null)
+        if (scalarField is not null)
         {
-            Console.WriteLine("No supported scalar instance field was found on InputManager; instance scalar read test skipped.");
-            Pass();
-            return;
+            string value = ReadScalarAsText(scalarField, managerAddress);
+            Console.WriteLine($"Instance scalar: {scalarField.TypeName} {scalarField.Query.Name} = {value}");
+
+            RequireThrows<InvalidOperationException>(
+                () => ReadDeliberatelyWrongScalar(scalarField, managerAddress),
+                "A deliberately incompatible managed scalar type was accepted for an instance field read.");
+            RequireThrows<InvalidOperationException>(
+                () => scalarField.ReadBlittable<int>(managerAddress),
+                "A scalar field was accepted by the explicit blittable-structure API.");
+
+            Console.WriteLine("Exact scalar validation: OK");
+            Console.WriteLine("Type mismatch rejection: OK");
+            Console.WriteLine("Blittable API separation: OK");
+        }
+        else
+        {
+            Console.WriteLine("No supported scalar instance field was found on InputManager; scalar read test skipped.");
         }
 
-        string value = ReadScalarAsText(scalarField, managerAddress);
-        Console.WriteLine($"Instance field: {scalarField.TypeName} {scalarField.Query.Name}");
-        Console.WriteLine($"Value:          {value}");
+        ResolvedField? stringField = fields.FirstOrDefault(field => field.StorageKind == FieldStorageKind.Instance && string.Equals(field.TypeName, "System.String", StringComparison.Ordinal));
 
-        RequireThrows<InvalidOperationException>(
-            () => ReadDeliberatelyWrongScalar(scalarField, managerAddress),
-            "A deliberately incompatible managed scalar type was accepted for an instance field read.");
+        if (stringField is not null)
+        {
+            string? value = stringField.ReadString(managerAddress);
+            Console.WriteLine($"String field:   {stringField.Query.Name}");
+            Console.WriteLine($"String value:   {FormatNullableString(value)}");
+            Console.WriteLine("String decoding: OK");
+        }
+        else
+        {
+            Console.WriteLine("No System.String instance field was found on InputManager; string read test skipped.");
+        }
 
-        Console.WriteLine("Exact scalar validation: OK");
-        Console.WriteLine("Type mismatch rejection: OK");
+        ResolvedField? arrayField = fields.FirstOrDefault(field => field.StorageKind == FieldStorageKind.Instance && field.TypeName.EndsWith("[]", StringComparison.Ordinal));
+        ResolvedArray? array = null;
+
+        if (arrayField is not null)
+        {
+            array = arrayField.ReadArray(managerAddress);
+            Console.WriteLine($"Array field:    {arrayField.TypeName} {arrayField.Query.Name}");
+
+            if (array is null)
+            {
+                Console.WriteLine("Array value:    <null>");
+            }
+            else
+            {
+                Require(array.Address != 0, "ResolvedArray has a null Il2CppArray*.");
+                Require(array.Length >= 0, "ResolvedArray exposed a negative length.");
+                Require(!string.IsNullOrWhiteSpace(array.ElementTypeName), "ResolvedArray exposed an empty element type name.");
+
+                Console.WriteLine($"Array*:         0x{array.Address:X}");
+                Console.WriteLine($"Length:         {array.Length}");
+                Console.WriteLine($"Element type:   {array.ElementTypeName}");
+
+                if (array.Length > 0)
+                    Console.WriteLine($"First element:  {ReadArrayElementAsText(array)}");
+
+                if (IsSupportedScalarFieldType(array.ElementTypeName))
+                {
+                    RequireThrows<ArgumentOutOfRangeException>(
+                        () => ReadArrayScalarAt(array, array.Length),
+                        "A scalar array accepted an index equal to Length.");
+                    Console.WriteLine("Array bounds validation: OK");
+                }
+                else if (string.Equals(array.ElementTypeName, "System.String", StringComparison.Ordinal))
+                {
+                    RequireThrows<ArgumentOutOfRangeException>(
+                        () => array.ReadString(array.Length),
+                        "A string array accepted an index equal to Length.");
+                    Console.WriteLine("Array bounds validation: OK");
+                }
+            }
+
+            Console.WriteLine("Array inspection: OK");
+        }
+        else
+        {
+            Console.WriteLine("No vector-array instance field was found on InputManager; array read test skipped.");
+        }
+
         Pass();
+        return array;
+    }
+
+    /// <summary>Formats one nullable managed string without dumping unbounded remote content into integration-test output.</summary>
+    /// <param name="value">The decoded string value.</param>
+    /// <returns>A bounded diagnostic representation preserving null and empty values.</returns>
+    private static string FormatNullableString(string? value)
+    {
+        if (value is null)
+            return "<null>";
+
+        if (value.Length == 0)
+            return "<empty>";
+
+        const int maximumDisplayedCharacters = 120;
+        string bounded = value.Length <= maximumDisplayedCharacters ? value : value[..maximumDisplayedCharacters] + "…";
+        return bounded.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal);
+    }
+
+    /// <summary>Reads one supported first array element into a bounded diagnostic string.</summary>
+    /// <param name="array">The validated non-empty array.</param>
+    /// <returns>A readable value or an explicit message when dynamic positive blittable/reference validation is intentionally unavailable.</returns>
+    private static string ReadArrayElementAsText(ResolvedArray array)
+    {
+        if (IsSupportedScalarFieldType(array.ElementTypeName))
+            return ReadArrayScalarAt(array, 0);
+
+        if (string.Equals(array.ElementTypeName, "System.String", StringComparison.Ordinal))
+            return FormatNullableString(array.ReadString(0));
+
+        try
+        {
+            return $"reference 0x{array.ReadReference(0):X}";
+        }
+        catch (InvalidOperationException)
+        {
+            return "<value-type element; matching local blittable mirror required>";
+        }
+    }
+
+    /// <summary>Reads one supported scalar array element and formats its value.</summary>
+    /// <param name="array">The scalar array.</param>
+    /// <param name="index">The zero-based element index.</param>
+    /// <returns>The formatted scalar value.</returns>
+    private static string ReadArrayScalarAt(ResolvedArray array, int index)
+    {
+        return array.ElementTypeName switch
+        {
+            "System.Boolean" => array.Read<bool>(index).ToString(),
+            "System.Char" => ((int)array.Read<char>(index)).ToString(),
+            "System.SByte" => array.Read<sbyte>(index).ToString(),
+            "System.Byte" => array.Read<byte>(index).ToString(),
+            "System.Int16" => array.Read<short>(index).ToString(),
+            "System.UInt16" => array.Read<ushort>(index).ToString(),
+            "System.Int32" => array.Read<int>(index).ToString(),
+            "System.UInt32" => array.Read<uint>(index).ToString(),
+            "System.Int64" => array.Read<long>(index).ToString(),
+            "System.UInt64" => array.Read<ulong>(index).ToString(),
+            "System.Single" => array.Read<float>(index).ToString("R"),
+            "System.Double" => array.Read<double>(index).ToString("R"),
+            "System.IntPtr" => $"0x{array.Read<nint>(index):X}",
+            "System.UIntPtr" => $"0x{array.Read<nuint>(index):X}",
+            _ => throw new InvalidOperationException($"Unsupported scalar array element type '{array.ElementTypeName}'.")
+        };
     }
 
     /// <summary>Determines whether a resolved field is an instance field whose semantic type belongs to the conservative scalar reader surface.</summary>
@@ -793,7 +933,8 @@ public static class Program
     /// <param name="method">A resolved method belonging to the previous generation.</param>
     /// <param name="property">A resolved property belonging to the previous generation.</param>
     /// <param name="field">A resolved field belonging to the previous generation.</param>
-    private static void TestCacheInvalidation(Il2CppResolver resolver, ResolvedAssembly assembly, ResolvedType type, ResolvedMethod method, ResolvedProperty property, ResolvedField field)
+    /// <param name="array">An optional array wrapper belonging to the previous generation.</param>
+    private static void TestCacheInvalidation(Il2CppResolver resolver, ResolvedAssembly assembly, ResolvedType type, ResolvedMethod method, ResolvedProperty property, ResolvedField field, ResolvedArray? array)
     {
         Section("Generation invalidation");
 
@@ -810,6 +951,11 @@ public static class Program
             RequireThrows<InvalidOperationException>(() => oldPropertyAccessor.ResolveCode(), "Old property accessor remained navigable after ClearCache.");
         RequireThrows<InvalidOperationException>(() => field.ResolveStorage(), "Old ResolvedField remained navigable after ClearCache.");
         RequireThrows<InvalidOperationException>(() => field.ReadStaticReference(), "Old ResolvedField value reading remained usable after ClearCache.");
+        RequireThrows<InvalidOperationException>(() => field.ReadStaticString(), "Old ResolvedField string reading remained usable after ClearCache.");
+        RequireThrows<InvalidOperationException>(() => field.ReadStaticArray(), "Old ResolvedField array reading remained usable after ClearCache.");
+
+        if (array is not null)
+            RequireThrows<InvalidOperationException>(() => array.ReadReference(0), "Old ResolvedArray remained readable after ClearCache.");
 
         Console.WriteLine("Old assembly rejected: OK");
         Console.WriteLine("Old type rejected:     OK");
@@ -820,6 +966,8 @@ public static class Program
         Console.WriteLine("Old property accessor rejected: OK");
         Console.WriteLine("Old field rejected:    OK");
         Console.WriteLine("Old field value read rejected: OK");
+        Console.WriteLine("Old string/array field reads rejected: OK");
+        Console.WriteLine($"Old array rejected:    {(array is null ? "SKIPPED" : "OK")}");
 
         // Snapshot properties remain valid.
         Require(assembly.ImageAddress != 0, "Old assembly snapshot lost its Image*.");
