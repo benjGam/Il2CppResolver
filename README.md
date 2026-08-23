@@ -3,10 +3,11 @@
 Semantic IL2CPP resolution and runtime navigation for live Windows x64 Unity processes.
 
 ```text
-Assembly → Type → Method   → Native Code / Metadata
-        │       ├→ Property → Getter / Setter Methods
-        │       └→ Field    → Static Storage → Validated Value Read
-        └────────→ Base / Interfaces / Nested / Declaring / Metadata
+Assembly → Type
+           ├→ Method   → Native Code / Metadata
+           ├→ Property → Getter / Setter → Controlled Getter Invocation → Validated Value
+           ├→ Field    → Storage → Validated Memory Read
+           └→ Base / Interfaces / Nested / Declaring / Metadata
 ```
 
 `Il2CppResolver` resolves managed identities such as assemblies, types, methods, properties, and fields against a live IL2CPP runtime. It keeps semantic resolution separate from version-sensitive native layout interpretation, and exposes session-bound navigation endpoints for exploring the resolved runtime without leaking the internal process, PE, remote-call, or cache infrastructure.
@@ -89,7 +90,6 @@ The current implementation is runtime-backed: it discovers and calls exported IL
 - [Current Limitations](#current-limitations)
 - [Complete Example](#complete-example)
 - [Development and Validation](#development-and-validation)
-- [Roadmap](#roadmap)
 
 ---
 
@@ -178,46 +178,44 @@ using UnityIl2CppResolver.Il2Cpp.Results;
 
 using Il2CppResolver resolver = Il2CppResolver.Attach(processId);
 
-resolver.SetMethodInfoLayout(
-    Il2CppMethodInfoLayouts.DirectMethodPointerFirstX64);
+resolver.SetMethodInfoLayout(Il2CppMethodInfoLayouts.DirectMethodPointerFirstX64);
+resolver.SetFieldStorageLayout(Il2CppClassLayouts.Class29_2X64);
 
-resolver.SetFieldStorageLayout(
-    Il2CppClassLayouts.Class29_2X64);
+ResolvedAssembly inputSystemAssembly = resolver.ResolveAssembly(new AssemblyQuery("Unity.InputSystem"));
+ResolvedType inputSystemType = inputSystemAssembly.ResolveType("UnityEngine.InputSystem", "InputSystem");
 
-ResolvedAssembly inputSystemAssembly = resolver.ResolveAssembly(
-    new AssemblyQuery("Unity.InputSystem"));
-
-ResolvedType inputSystemType = inputSystemAssembly.ResolveType(
-    "UnityEngine.InputSystem",
-    "InputSystem");
-
-ResolvedMethod queueEvent = inputSystemType.ResolveMethod(
-    "QueueEvent",
-    "UnityEngine.InputSystem.LowLevel.InputEventPtr");
-
+ResolvedMethod queueEvent = inputSystemType.ResolveMethod("QueueEvent", "UnityEngine.InputSystem.LowLevel.InputEventPtr");
 ResolvedMethodCode queueEventCode = queueEvent.ResolveCode();
-
-IReadOnlyList<ResolvedProperty> properties = inputSystemType.GetProperties();
-ResolvedProperty property = properties[0];
-ResolvedMethod? getter = property.Getter;
-ResolvedMethod? setter = property.Setter;
 
 ResolvedField managerField = inputSystemType.ResolveField("s_Manager");
 ResolvedFieldStorage managerStorage = managerField.ResolveStorage();
 nint managerObject = managerField.ReadStaticReference();
 
+ResolvedProperty pollingFrequency = inputSystemType.ResolveProperty("pollingFrequency");
+float pollingFrequencyValue = pollingFrequency.ReadStatic<float>();
+
+ResolvedProperty settings = inputSystemType.ResolveProperty("settings");
+nint settingsObject = settings.ReadStaticReference();
+
+ResolvedType inputSettingsType = inputSystemAssembly.ResolveType("UnityEngine.InputSystem", "InputSettings");
+ResolvedProperty defaultButtonPressPoint = inputSettingsType.ResolveProperty("defaultButtonPressPoint");
+float defaultButtonPressPointValue = defaultButtonPressPoint.Read<float>(settingsObject);
+
 ResolvedType? baseType = inputSystemType.GetBaseType();
 ResolvedTypeMetadata typeMetadata = inputSystemType.GetMetadata();
 ResolvedMethodMetadata methodMetadata = queueEvent.GetMetadata();
 
-Console.WriteLine($"MethodInfo*:      0x{queueEvent.MethodInfoAddress:X}");
-Console.WriteLine($"Native code:      0x{queueEventCode.NativeAddress:X}");
-Console.WriteLine($"FieldInfo*:       0x{managerField.FieldInfoAddress:X}");
-Console.WriteLine($"Static storage:   0x{managerStorage.StorageAddress:X}");
-Console.WriteLine($"InputManager*:    0x{managerObject:X}");
-Console.WriteLine($"Base type:        {baseType?.Query.Name}");
-Console.WriteLine($"Type token:       0x{typeMetadata.MetadataToken:X8}");
-Console.WriteLine($"Method token:     0x{methodMetadata.MetadataToken:X8}");
+Console.WriteLine($"MethodInfo*:       0x{queueEvent.MethodInfoAddress:X}");
+Console.WriteLine($"Native code:       0x{queueEventCode.NativeAddress:X}");
+Console.WriteLine($"FieldInfo*:        0x{managerField.FieldInfoAddress:X}");
+Console.WriteLine($"Static storage:    0x{managerStorage.StorageAddress:X}");
+Console.WriteLine($"InputManager*:     0x{managerObject:X}");
+Console.WriteLine($"Polling frequency: {pollingFrequencyValue}");
+Console.WriteLine($"Settings*:         0x{settingsObject:X}");
+Console.WriteLine($"Press point:       {defaultButtonPressPointValue}");
+Console.WriteLine($"Base type:         {baseType?.Query.Name}");
+Console.WriteLine($"Type token:        0x{typeMetadata.MetadataToken:X8}");
+Console.WriteLine($"Method token:      0x{methodMetadata.MetadataToken:X8}");
 ```
 
 The important distinction is:
@@ -228,9 +226,7 @@ semantic identity
 native representation
 ```
 
-Resolving a method does not automatically assume a `MethodInfo` layout, and resolving a field does not manufacture an absolute storage address.
-
----
+Resolving a method does not automatically assume a `MethodInfo` layout, resolving a field does not manufacture an absolute storage address, and reading a property is not a memory read: it executes the property's managed getter through the controlled invocation path.
 
 # Core Concepts
 
@@ -332,9 +328,9 @@ ResolvedField
 ResolvedArray
 ```
 
-They expose immutable runtime identity information and are bound to the resolver session that produced them.
+They expose immutable runtime identity information and are bound to the resolver session and cache generation that produced them.
 
-They also provide navigation endpoints:
+They also provide navigation and value endpoints:
 
 ```text
 ResolvedAssembly
@@ -342,21 +338,26 @@ ResolvedAssembly
     └── ResolveType(...)
 
 ResolvedType
-    ├── GetMethods()
-    ├── GetMethods(name)
-    ├── ResolveMethod(...)
-    ├── GetProperties()
-    ├── GetProperties(name)
-    ├── ResolveProperty(...)
-    ├── GetFields()
-    └── ResolveField(...)
+    ├── GetMethods() / GetMethods(name) / ResolveMethod(...)
+    ├── GetProperties() / GetProperties(name) / ResolveProperty(...)
+    ├── GetFields() / ResolveField(...)
+    ├── GetBaseType() / GetInterfaces()
+    ├── GetNestedTypes() / GetDeclaringType()
+    └── GetMetadata()
 
 ResolvedMethod
-    └── ResolveCode(...)
+    ├── ResolveCode(...)
+    └── GetMetadata()
 
 ResolvedProperty
     ├── Getter → ResolvedMethod?
-    └── Setter → ResolvedMethod?
+    ├── Setter → ResolvedMethod?
+    ├── Read<T>() / ReadStatic<T>()
+    ├── ReadEnum<TEnum>() / ReadStaticEnum<TEnum>()
+    ├── ReadReference() / ReadStaticReference()
+    ├── ReadString() / ReadStaticString()
+    ├── ReadArray() / ReadStaticArray()
+    └── ReadBlittable<T>() / ReadStaticBlittable<T>()
 
 ResolvedField
     ├── ResolveStorage(...)
@@ -371,9 +372,20 @@ ResolvedArray
     └── ReadBlittable<T>(index)
 ```
 
-The runtime logic remains centralized in the owning resolver session; resolved entities are navigation handles, not independent runtime backends.
+The runtime logic remains centralized in the owning resolver session. Resolved entities are immutable, session-bound navigation handles rather than independent runtime backends.
 
----
+Field and property value endpoints deliberately use different mechanisms:
+
+```text
+ResolvedField
+    → validated storage/address calculation
+    → validated remote memory read
+
+ResolvedProperty
+    → validated getter signature
+    → controlled managed invocation
+    → rooted and validated result decoding
+```
 
 ## Native Mapping Results
 
@@ -1407,7 +1419,7 @@ storage.StaticFieldsSizeOffset
 
 # Navigation API
 
-The public API is intentionally linear:
+The public API keeps semantic navigation separate from native mapping, memory inspection, and managed invocation:
 
 ```text
 Il2CppResolver
@@ -1415,52 +1427,49 @@ Il2CppResolver
 ResolvedAssembly
       ↓
 ResolvedType
-      ├───────────────┐
-      ↓               ↓
-ResolvedMethod    ResolvedField
-      ↓               ↓
-ResolvedMethodCode  ResolvedFieldStorage
+      ├──────────────────┬────────────────────┐
+      ↓                  ↓                    ↓
+ResolvedMethod     ResolvedProperty      ResolvedField
+      │             │          │           │        │
+      ↓             ↓          ↓           ↓        ↓
+ResolvedMethodCode Accessors   Read*   ResolveStorage Read*
+                               │                       │
+                               ↓                       ↓
+                    controlled getter            validated memory
+                       invocation                    read
 ```
 
 A typical navigation flow is:
 
 ```csharp
-ResolvedAssembly assembly = resolver.ResolveAssembly(
-    new AssemblyQuery("Unity.InputSystem"));
+ResolvedAssembly assembly = resolver.ResolveAssembly(new AssemblyQuery("Unity.InputSystem"));
+ResolvedType type = assembly.ResolveType("UnityEngine.InputSystem", "InputSystem");
 
-ResolvedType type = assembly.ResolveType(
-    "UnityEngine.InputSystem",
-    "InputSystem");
-
-ResolvedMethod method = type.ResolveMethod(
-    "QueueEvent",
-    "UnityEngine.InputSystem.LowLevel.InputEventPtr");
-
+ResolvedMethod method = type.ResolveMethod("QueueEvent", "UnityEngine.InputSystem.LowLevel.InputEventPtr");
 ResolvedMethodCode code = method.ResolveCode();
 
 ResolvedField field = type.ResolveField("s_Manager");
 ResolvedFieldStorage storage = field.ResolveStorage();
+nint managerObject = field.ReadStaticReference();
+
+ResolvedProperty property = type.ResolveProperty("pollingFrequency");
+float pollingFrequency = property.ReadStatic<float>();
 ```
 
-Navigation does not duplicate runtime state. Every resolved entity delegates through the same session and reuses the same catalogues and caches.
-
----
+Navigation does not duplicate runtime state. Every resolved entity delegates through the same session and reuses the same catalogues, identity maps, generation checks, and lifetime rules.
 
 # Caching and Runtime Catalogues
 
-The resolver maintains session-scoped local state to reduce expensive remote runtime calls.
+The resolver maintains session-scoped local state to reduce expensive remote runtime calls and preserve stable public identity within one cache generation.
 
 The current cache/catalogue layers include:
 
 - active IL2CPP domain snapshot;
-- loaded assembly snapshot;
-- assembly lookup indexes;
+- loaded assembly snapshot and assembly lookup indexes;
 - image type catalogues;
-- raw method addresses per `Il2CppClass*`;
-- raw field addresses per `Il2CppClass*`;
+- raw method, property, and field addresses per `Il2CppClass*`;
 - member-name indexes;
-- lazily inspected method descriptions;
-- lazily inspected field descriptions;
+- lazily inspected method, property, and field descriptions;
 - IL2CPP type-name cache;
 - runtime type descriptors and class metadata;
 - array element type and element-size descriptors;
@@ -1470,9 +1479,9 @@ The current cache/catalogue layers include:
 - layout-sensitive static-field storage mappings;
 - runtime-API static-field storage mappings.
 
-The design intentionally optimizes local reuse before introducing any persistent remote execution state.
+Managed objects returned by property getters use a separate lifetime mechanism rather than the semantic cache itself. Non-null raw-reference and `ResolvedArray` results can retain strong IL2CPP GC handles in the session so their remote object identity remains valid after the temporary invocation thread detaches. Those retained roots are released by `ClearCache()` and resolver disposal.
 
----
+The design intentionally optimizes local reuse and explicit session ownership without introducing a persistent remote worker.
 
 # Targeted Resolution vs. Enumeration
 
@@ -1482,6 +1491,7 @@ Use targeted resolution when the identity is already known:
 resolver.ResolveAssembly(...)
 resolver.ResolveType(...)
 type.ResolveMethod(...)
+type.ResolveProperty(...)
 type.ResolveField(...)
 ```
 
@@ -1492,6 +1502,8 @@ resolver.GetAssemblies()
 assembly.GetTypes()
 type.GetMethods()
 type.GetMethods("Name")
+type.GetProperties()
+type.GetProperties("Name")
 type.GetFields()
 ```
 
@@ -1505,9 +1517,7 @@ GetXs
     → explicitly materialize an exploratory snapshot
 ```
 
-For example, `ResolveMethod` does not call `GetMethods()` and inspect every signature. It uses the class member name index first and inspects complete signatures only for matching-name candidates.
-
----
+For example, `ResolveMethod` does not call `GetMethods()` and inspect every signature. It uses the class member name index first and inspects complete signatures only for matching-name candidates. Property resolution follows the same targeted-name-first model before accessor signatures are materialized.
 
 # Runtime Identity Map
 
@@ -1516,26 +1526,23 @@ Within one cache generation, runtime identities are reused by native address.
 The session maintains identity maps for concepts such as:
 
 ```text
-Il2CppImage*  → ResolvedAssembly
-Il2CppClass*  → ResolvedType
-MethodInfo*   → ResolvedMethod
-FieldInfo*    → ResolvedField
+Il2CppImage*   → ResolvedAssembly
+Il2CppClass*   → ResolvedType
+MethodInfo*    → ResolvedMethod
+PropertyInfo*  → ResolvedProperty
+FieldInfo*     → ResolvedField
 ```
 
 Therefore, targeted resolution and navigation can converge on the same public object instance:
 
 ```csharp
 ResolvedType first = resolver.ResolveType(typeQuery);
-ResolvedType second = assembly.ResolveType(
-    "UnityEngine.InputSystem",
-    "InputSystem");
+ResolvedType second = assembly.ResolveType("UnityEngine.InputSystem", "InputSystem");
 
 bool sameObject = ReferenceEquals(first, second);
 ```
 
-Within the same generation, `sameObject` is expected to be `true` when both paths resolve the same runtime entity.
-
----
+Within the same generation, `sameObject` is expected to be `true` when both paths resolve the same runtime entity. The same rule applies when a property accessor is reached through `ResolvedProperty.Getter` / `Setter` and later resolved independently as a method.
 
 # ClearCache and Cache Generations
 
@@ -1543,7 +1550,7 @@ Within the same generation, `sameObject` is expected to be `true` when both path
 resolver.ClearCache();
 ```
 
-`ClearCache()` invalidates:
+Before invalidating runtime snapshots, `ClearCache()` releases strong GC handles retained for managed reference/array results returned by property getters. It then invalidates:
 
 - semantic resolution results;
 - runtime snapshots and catalogues;
@@ -1561,7 +1568,7 @@ It preserves:
 
 The session then advances its navigation generation.
 
----
+Resolver disposal follows the same ownership rule for retained managed results: roots still owned by the session are released before the session and process attachment are torn down. If a remote cleanup operation cannot be proven safe, the resolver follows its conservative abandonment policy rather than retrying a potentially unsafe free.
 
 ## Generation Invalidation
 
@@ -1606,22 +1613,23 @@ This favors correctness and deterministic session state over parallel remote exe
 
 # Error Handling
 
-The resolver uses standard exception types to communicate different failure classes.
+The resolver uses standard exception types plus one invocation-specific exception to communicate different failure classes.
 
 | Exception | Typical meaning |
 |---|---|
-| `ArgumentException` / `ArgumentOutOfRangeException` | Invalid query, layout, offset, timeout, or configuration argument. |
+| `ArgumentException` / `ArgumentOutOfRangeException` | Invalid query, layout, offset, timeout, instance address, or configuration argument. |
 | `KeyNotFoundException` | A requested semantic assembly, type, method, property, or field was not found. |
-| `InvalidDataException` | Runtime evidence, a layout interpretation, PE state, or automatic detection result was inconsistent. |
-| `NotSupportedException` | The target lacks an optional capability or the requested storage category is intentionally unsupported. |
+| `InvalidDataException` | Runtime evidence, a layout interpretation, PE state, managed object shape, or automatic detection result was inconsistent. |
+| `NotSupportedException` | The target lacks an optional capability or the requested storage/value/invocation category is intentionally unsupported. |
 | `InvalidOperationException` | The requested operation is incompatible with current resolver state, no field-storage strategy is available, a target has exited, or a resolved entity belongs to an invalidated generation. |
+| `Il2CppInvocationException` | A property getter executed through `il2cpp_runtime_invoke` reported a managed IL2CPP exception. |
 | `ObjectDisposedException` | The resolver/session or an owned native component has already been disposed. |
 | `TimeoutException` | A remote runtime call did not complete within its finite timeout. |
 | `Win32Exception` | A Windows process, memory, thread, module, or synchronization operation failed. |
 
-Consumers should not normally catch every exception and continue blindly. Failures such as target termination, invalid structural evidence, or unresolved remote-thread termination can indicate that the current resolver session should no longer be trusted for further operations.
+`Il2CppInvocationException.ExceptionAddress` exposes the diagnostic remote `Il2CppException*` identity reported by IL2CPP. The exception object is not retained with a GC handle and the address must not be treated as safe for later dereferencing.
 
----
+Consumers should not normally catch every exception and continue blindly. Failures such as target termination, invalid structural evidence, or unresolved remote-thread termination can indicate that the current resolver session should no longer be trusted for further operations.
 
 # Performance Characteristics
 
@@ -1656,24 +1664,26 @@ Enumerate everything
 The public API intentionally hides native machinery behind one resolver session.
 
 ```text
-                     Il2CppResolver
-                           │
-                    ResolutionSession
-                           │
-        ┌──────────────────┼──────────────────┐
-        │                  │                  │
- ResolutionCache     RuntimeCatalog     LayoutRegistry
-        │                  │                  │
-        └──────────────┬───┴───────┬──────────┘
-                       │           │
-             RuntimeResolutionBackend
-                       │
-                  Il2CppRuntime
-                       │
-                    RemoteCall
+                         Il2CppResolver
+                               │
+                        ResolutionSession
+                               │
+          ┌────────────────────┼─────────────────────┐
+          │                    │                     │
+  ResolutionCache       RuntimeCatalogues      LayoutRegistry
+          │                    │                     │
+          └──────────────┬─────┴──────────────┬──────┘
+                         │                    │
+             RuntimeResolutionBackend   Il2CppGetterInvoker
+                         │                    │
+                         └──────────┬─────────┘
+                                    │
+                               Il2CppRuntime
+                                    │
+                               RemoteCall
 ```
 
-Native mapping remains separate from semantic resolution:
+Semantic resolution remains separate from native method mapping:
 
 ```text
 ResolvedMethod
@@ -1683,12 +1693,28 @@ Il2CppMethodPointerResolver
 ResolvedMethodCode
 ```
 
-Properties reuse method resolution for their accessors:
+Properties reuse method identity for their accessors, but value reads follow a controlled invocation path:
 
 ```text
 ResolvedProperty
     ├── Getter → ResolvedMethod
-    └── Setter → ResolvedMethod
+    ├── Setter → ResolvedMethod
+    │
+    └── Read*
+          ↓
+    Il2CppGetterInvoker
+          ↓
+    validate signature / static-instance contract
+          ↓
+    root instance when required
+          ↓
+    runtime class + assignability + virtual dispatch
+          ↓
+    il2cpp_runtime_invoke
+          ↓
+    root result before thread detach
+          ↓
+    decode locally or retain result root
 ```
 
 Static-field storage uses two possible backends:
@@ -1727,11 +1753,9 @@ FieldValueTypeValidator
 Type relationships and metadata are lazy catalogue operations:
 
 ```text
-ResolvedType ──→ Il2CppTypeCatalog ──→ parent / interfaces / nested / declaring / metadata
-ResolvedMethod ─→ Il2CppMethodMetadataCatalog ─→ method metadata
+ResolvedType   → Il2CppTypeCatalog           → parent / interfaces / nested / declaring / metadata
+ResolvedMethod → Il2CppMethodMetadataCatalog → method metadata
 ```
-
----
 
 # Project Structure
 
@@ -1751,16 +1775,14 @@ Il2Cpp/
 ├── Layouts/                 public layout definitions/catalogues + internal registry
 ├── Discovery/               internal IL2CPP target discovery
 ├── Runtime/
-│   ├── Model/               internal raw runtime descriptions
+│   ├── Model/               internal raw runtime and invocation descriptions
 │   └── Catalog/             session-scoped runtime snapshots and indexes
 ├── Detection/               internal layout detectors
 ├── Mapping/                 internal method-code and field-storage mappers
-├── Invocation/              controlled parameterless property-getter invocation
+├── Invocation/              controlled parameterless property-getter invocation and GC-root lifetime
 ├── Values/                  internal field/type validation and safe value decoding
-└── Resolution/              semantic backend, cache and session orchestration
+└── Resolution/              semantic backend, cache, identity map and session orchestration
 ```
-
----
 
 # Runtime Execution Model
 
@@ -1806,15 +1828,32 @@ persistent mutation
 
 The resolver primarily uses reads and short-lived remote execution required to call IL2CPP runtime APIs. Property value reads additionally execute the resolved managed getter through `il2cpp_runtime_invoke`; callers should treat that endpoint as application code execution rather than passive inspection.
 
+Managed object lifetime is explicit around invocation:
+
+```text
+caller-provided instance
+    → temporary strong GC root
+    → rooted target used for validation and virtual dispatch
+    → managed invocation
+    → temporary root released when completion is proven
+
+non-null getter result
+    → strong GC root created before invocation-thread detach
+    → scalar/string/blittable result: decode then release
+    → raw reference/ResolvedArray: retain until ClearCache()/Dispose()
+```
+
+`Il2CppGCHandle` is treated as an opaque pointer-sized native value (`nuint`) throughout the resolver. No invocation path truncates it to a 32-bit value.
+
 ## Remote timeout safety
 
 A critical invariant is:
 
-> Remote memory must not be freed while a remote thread may still reference it.
+> Remote memory or managed roots must not be released while a remote thread may still reference them.
 
-When thread termination cannot be proven because of a timeout, failed wait, or unexpected synchronization state, remote allocations that may still be referenced by that thread are intentionally abandoned rather than freed.
+When thread termination cannot be proven because of a timeout, failed wait, or unexpected synchronization state, remote allocations or temporary roots that may still be referenced by that thread are intentionally abandoned rather than freed.
 
-This can leak target memory until the target process terminates, but avoids a remote use-after-free condition.
+This can leak target resources until the target process terminates, but avoids remote use-after-free or invalid GC-handle cleanup.
 
 For this layer:
 
@@ -1823,8 +1862,6 @@ controlled leak
     >
 unsafe remote free
 ```
-
----
 
 # Required and Optional Runtime Capabilities
 
@@ -1869,14 +1906,20 @@ If this capability is unavailable, assembly/type/method/field resolution remains
 
 ## Optional property getter invocation
 
-Property value reading requires the following base invocation exports:
+The current property getter gate depends on runtime type classification plus the following base invocation exports:
 
 ```text
+il2cpp_type_get_type
+il2cpp_class_from_type
+il2cpp_class_is_valuetype
+il2cpp_class_is_enum
+
 il2cpp_runtime_invoke
 il2cpp_object_unbox
 il2cpp_thread_attach
 il2cpp_thread_detach
 il2cpp_method_is_instance
+il2cpp_method_is_generic
 il2cpp_object_get_class
 il2cpp_object_get_virtual_method
 il2cpp_class_is_assignable_from
@@ -1884,15 +1927,15 @@ il2cpp_gchandle_new
 il2cpp_gchandle_free
 ```
 
-Instance getters additionally require:
+Instance getters additionally require the complete managed-object rooting capability:
 
 ```text
 il2cpp_gchandle_get_target
 ```
 
-These exports remain optional. Missing invocation support does not affect property navigation or any semantic resolver operation; only the affected property value reads throw `NotSupportedException`. Returned managed objects are strongly rooted before the temporary invocation thread detaches. Instance getters use `il2cpp_gchandle_get_target` so the caller-supplied object can be rooted before class validation and virtual dispatch; static getter invocation remains independent of that instance-only operation.
+The string and array return endpoints also require their respective optional decoding capabilities documented below. Missing invocation support does not affect property navigation or normal semantic resolution; only the affected property value read throws `NotSupportedException`.
 
----
+Returned non-null managed objects are strongly rooted before the temporary invocation thread detaches. Instance getters first create a temporary strong root for the supplied object and recover the protected target through `il2cpp_gchandle_get_target`; runtime class validation, assignability checks, virtual dispatch, and managed invocation then use that rooted object. Static getter invocation does not require an instance root.
 
 ## Optional runtime static-field storage
 
@@ -1942,41 +1985,29 @@ Parent, interface, nested-type, and declaring-type endpoints depend only on the 
 
 # Current Limitations
 
-The current implementation deliberately does **not** provide:
-
-- Unvalidated arbitrary unmanaged-struct reads; only explicitly matching blittable value types are accepted.
-- Multidimensional array inspection or eager local `T[]` materialization.
-- Unboxed value-type instance field addressing.
-- `ThreadStatic` value resolution.
-- Literal constant retrieval.
-- Field writes.
-- Property setter invocation.
-- Indexed/parameterized property getter invocation.
-- General managed method invocation.
-
-
-The current implementation intentionally does not attempt to solve every IL2CPP runtime problem.
-
-Known boundaries include:
+The implementation deliberately keeps its supported surface narrow and validated. Current boundaries are:
 
 - Windows x64 only.
-- Thread-static field storage is not resolved by the normal static-field storage API.
-- No general managed method invocation API; the invocation layer is intentionally limited to parameterless property getters.
-- Property setters and indexed/parameterized getters remain unsupported.
-- A resolved native method address does not guarantee ABI-safe invocation.
-- Automatic MethodInfo detection depends on enough method evidence from the declaring type.
+- No general managed `ResolvedMethod.Invoke(...)` API; managed invocation is intentionally limited to parameterless property getters.
+- Property setters and indexed/parameterized property getters are unsupported.
+- Field writes are unsupported.
+- `ThreadStatic` value resolution is unsupported.
+- Literal constant retrieval is unsupported.
+- Unboxed value-type instance field addressing is unsupported.
+- Arbitrary unmanaged-struct reads are rejected; blittable reads require exact managed type, size, and metadata validation.
+- Multidimensional array inspection and eager local `T[]` materialization are unsupported.
+- A resolved native method address does not imply an ABI-safe external invocation contract.
+- Automatic MethodInfo detection requires enough method evidence from the declaring type.
 - Automatic Il2CppClass detection requires consumer-provided normal static-field evidence across multiple classes.
-- Array payload addressing currently assumes the validated Windows x64 `Il2CppArray` vector offset `0x20`; public runtime APIs are used to cross-check array shape and payload size before that structural offset is consumed.
+- Array payload addressing currently uses the validated Windows x64 `Il2CppArray` vector offset `0x20`; public runtime APIs cross-check array shape and payload size before that structural offset is consumed.
 - Managed strings are bounded by a defensive maximum character count before local allocation.
-- Some navigation endpoints depend on optional target exports.
-- Semantic modeling of advanced generic/nested-type identity may be extended later.
-- Layout catalogues intentionally cover explicit known structures rather than pretending every Unity/IL2CPP generation shares one layout.
-
----
+- Some navigation, metadata, value-reading, and invocation endpoints depend on optional target exports and fail independently when unavailable.
+- Advanced generic and nested-type semantic identity is intentionally not modeled beyond the current runtime-backed representation.
+- Layout catalogues cover explicit known structures rather than assuming every Unity/IL2CPP generation shares one native layout.
 
 # Complete Example
 
-The following example demonstrates configuration, navigation, exact overload resolution, metadata inspection, type relationships, native method-code mapping, field resolution, safe reference field reading, static-field storage, enumeration, and cache invalidation. Specialized string, array, scalar, enum, and blittable reads use the same `ResolvedField` APIs documented above.
+The following example demonstrates configuration, semantic navigation, exact overload resolution, metadata inspection, native method-code mapping, validated field reads, controlled static/instance property getter invocation, type relationships, and cache invalidation.
 
 ```csharp
 using UnityIl2CppResolver.Il2Cpp;
@@ -1986,34 +2017,20 @@ using UnityIl2CppResolver.Il2Cpp.Results;
 
 using Il2CppResolver resolver = Il2CppResolver.Attach(processId);
 
-// Configure known structural layouts once for this session.
-resolver.SetMethodInfoLayout(
-    Il2CppMethodInfoLayouts.DirectMethodPointerFirstX64);
+resolver.SetMethodInfoLayout(Il2CppMethodInfoLayouts.DirectMethodPointerFirstX64);
+resolver.SetFieldStorageLayout(Il2CppClassLayouts.Class29_2X64);
 
-resolver.SetFieldStorageLayout(
-    Il2CppClassLayouts.Class29_2X64);
-
-// Enumerate loaded assemblies.
 IReadOnlyList<ResolvedAssembly> assemblies = resolver.GetAssemblies();
 Console.WriteLine($"Assemblies: {assemblies.Count}");
 
-// Resolve one assembly semantically.
-ResolvedAssembly inputAssembly = resolver.ResolveAssembly(
-    new AssemblyQuery("Unity.InputSystem"));
-
+ResolvedAssembly inputAssembly = resolver.ResolveAssembly(new AssemblyQuery("Unity.InputSystem"));
 Console.WriteLine($"Assembly*: 0x{inputAssembly.AssemblyAddress:X}");
 Console.WriteLine($"Image*:    0x{inputAssembly.ImageAddress:X}");
 
-// Navigate to a known type without enumerating every type first.
-ResolvedType inputSystem = inputAssembly.ResolveType(
-    "UnityEngine.InputSystem",
-    "InputSystem");
-
+ResolvedType inputSystem = inputAssembly.ResolveType("UnityEngine.InputSystem", "InputSystem");
 Console.WriteLine($"Class*:    0x{inputSystem.ClassAddress:X}");
 
-// Explore only the overloads sharing one method name.
-IReadOnlyList<ResolvedMethod> queueEventOverloads =
-    inputSystem.GetMethods("QueueEvent");
+IReadOnlyList<ResolvedMethod> queueEventOverloads = inputSystem.GetMethods("QueueEvent");
 
 foreach (ResolvedMethod overload in queueEventOverloads)
 {
@@ -2021,12 +2038,7 @@ foreach (ResolvedMethod overload in queueEventOverloads)
     Console.WriteLine($"{overload.ReturnTypeName} {overload.Query.Name}({parameters})");
 }
 
-// Resolve one exact overload.
-ResolvedMethod queueEvent = inputSystem.ResolveMethod(
-    "QueueEvent",
-    "UnityEngine.InputSystem.LowLevel.InputEventPtr");
-
-// Map the resolved MethodInfo to direct native executable code.
+ResolvedMethod queueEvent = inputSystem.ResolveMethod("QueueEvent", "UnityEngine.InputSystem.LowLevel.InputEventPtr");
 ResolvedMethodCode queueEventCode = queueEvent.ResolveCode();
 
 Console.WriteLine($"MethodInfo*: 0x{queueEvent.MethodInfoAddress:X}");
@@ -2034,36 +2046,28 @@ Console.WriteLine($"Native:      0x{queueEventCode.NativeAddress:X}");
 Console.WriteLine($"Section:     {queueEventCode.SectionName}");
 Console.WriteLine($"Profile:     {queueEventCode.CompatibilityProfile}");
 
-// Enumerate and resolve properties.
 IReadOnlyList<ResolvedProperty> properties = inputSystem.GetProperties();
 Console.WriteLine($"Properties:  {properties.Count}");
 
-if (properties.Count > 0)
-{
-    ResolvedProperty property = properties[0];
-    ResolvedProperty resolvedProperty = inputSystem.ResolveProperty(
-        property.Query.Name,
-        property.IndexParameterTypeNames.ToArray());
-
-    Console.WriteLine($"PropertyInfo*: 0x{resolvedProperty.PropertyInfoAddress:X}");
-    Console.WriteLine($"Property type:  {resolvedProperty.TypeName}");
-    Console.WriteLine($"CanRead:        {resolvedProperty.CanRead}");
-    Console.WriteLine($"CanWrite:       {resolvedProperty.CanWrite}");
-}
-
-// Property value reads execute managed getter code.
 ResolvedProperty pollingFrequency = inputSystem.ResolveProperty("pollingFrequency");
 float currentPollingFrequency = pollingFrequency.ReadStatic<float>();
 Console.WriteLine($"Polling frequency: {currentPollingFrequency}");
 
-// Resolve one field.
+ResolvedProperty settings = inputSystem.ResolveProperty("settings");
+nint settingsObject = settings.ReadStaticReference();
+Console.WriteLine($"InputSettings*: 0x{settingsObject:X}");
+
+ResolvedType inputSettings = inputAssembly.ResolveType("UnityEngine.InputSystem", "InputSettings");
+ResolvedProperty defaultButtonPressPoint = inputSettings.ResolveProperty("defaultButtonPressPoint");
+float currentDefaultButtonPressPoint = defaultButtonPressPoint.Read<float>(settingsObject);
+Console.WriteLine($"Default button press point: {currentDefaultButtonPressPoint}");
+
 ResolvedField manager = inputSystem.ResolveField("s_Manager");
 
-Console.WriteLine($"FieldInfo*:  0x{manager.FieldInfoAddress:X}");
-Console.WriteLine($"Field type:  {manager.TypeName}");
-Console.WriteLine($"Storage:     {manager.StorageKind}");
+Console.WriteLine($"FieldInfo*: 0x{manager.FieldInfoAddress:X}");
+Console.WriteLine($"Field type: {manager.TypeName}");
+Console.WriteLine($"Storage:    {manager.StorageKind}");
 
-// Map normal static storage.
 ResolvedFieldStorage managerStorage = manager.ResolveStorage();
 
 Console.WriteLine($"Static base: 0x{managerStorage.StaticFieldsAddress:X}");
@@ -2072,11 +2076,9 @@ Console.WriteLine($"Offset:      0x{managerStorage.StaticStorageOffset:X}");
 Console.WriteLine($"Address:     0x{managerStorage.StorageAddress:X}");
 Console.WriteLine($"Source:      {managerStorage.ResolutionSource}");
 
-// Read the normal static managed reference after runtime type and storage validation.
 nint managerObject = manager.ReadStaticReference();
 Console.WriteLine($"InputManager*: 0x{managerObject:X}");
 
-// Navigate class relationships and inspect cached metadata explicitly.
 ResolvedType? baseType = inputSystem.GetBaseType();
 IReadOnlyList<ResolvedType> interfaces = inputSystem.GetInterfaces();
 ResolvedTypeMetadata inputSystemMetadata = inputSystem.GetMetadata();
@@ -2087,21 +2089,15 @@ Console.WriteLine($"Interfaces:   {interfaces.Count}");
 Console.WriteLine($"Type token:   0x{inputSystemMetadata.MetadataToken:X8}");
 Console.WriteLine($"Method token: 0x{queueEventMetadata.MetadataToken:X8}");
 
-// Explicitly invalidate runtime snapshots when required.
 resolver.ClearCache();
 
-// Old resolved entities retain snapshot properties but cannot navigate.
+// Snapshot properties remain readable, but old resolved entities cannot navigate.
 Console.WriteLine($"Old Class*: 0x{inputSystem.ClassAddress:X}");
 
-// Re-resolve before performing additional navigation.
-ResolvedType refreshedInputSystem = resolver.ResolveType(
-    new TypeQuery(
-        "Unity.InputSystem",
-        "UnityEngine.InputSystem",
-        "InputSystem"));
+ResolvedType refreshedInputSystem = resolver.ResolveType(new TypeQuery("Unity.InputSystem", "UnityEngine.InputSystem", "InputSystem"));
 ```
 
----
+Specialized scalar, enum, string, array, and blittable field/property reads use the corresponding typed `Read*` APIs documented above.
 
 # Development and Validation
 
@@ -2109,38 +2105,26 @@ The current resolver has been exercised against a live IL2CPP target with valida
 
 - assembly enumeration and targeted assembly identity;
 - type enumeration and targeted type identity;
-- exact method overload matching;
-- exhaustive method navigation;
+- exact method overload matching and exhaustive method navigation;
+- property enumeration, accessor identity reuse, and targeted property identity;
 - field enumeration and targeted field identity;
 - MethodInfo → native code validation;
 - static-field base + offset mapping;
 - exact scalar and managed-reference field reads;
-- static and instance parameterless property getter invocation with scalar/reference return validation;
-- managed-exception capture, object assignability checks, virtual dispatch, and generation invalidation for property reads;
 - managed-string decoding when a suitable live field is available;
-- vector-array inspection, element typing and bounds rejection when a suitable live field is available;
+- vector-array inspection, element typing, and bounds rejection when a suitable live field is available;
 - explicit rejection of scalar misuse through the blittable-structure API;
-- configured layouts;
-- one-shot layout overrides;
+- static parameterless property getter invocation with scalar and managed-reference results;
+- instance parameterless property getter invocation through temporary strong instance rooting, runtime assignability validation, and virtual dispatch;
+- strong result rooting before invocation-thread detach and retained reference lifetime across normal navigation;
+- managed-exception capture through `Il2CppInvocationException`;
+- configured layouts and one-shot layout overrides;
 - resolver-level and navigation-level parity;
-- identity-map reuse;
+- identity-map reuse for assemblies, types, methods, properties, and fields;
 - repeated navigation/cache reuse;
-- cache-generation invalidation, including stale field reads and stale `ResolvedArray` wrappers;
-- persistence of explicit layout configuration across `ClearCache()`.
+- cache-generation invalidation, including stale field reads, stale property getter invocation, stale relationships/metadata, and stale `ResolvedArray` wrappers;
+- release of session-retained managed result roots during cache invalidation;
+- persistence of explicit layout configuration across `ClearCache()`;
+- rematerialization of metadata, relationships, and value-reading behavior in the new generation.
 
-Integration tests should continue to distinguish functional assertions from timing observations. Cache correctness is primarily validated through stable identity and result reuse rather than assuming a particular wall-clock duration.
-
----
-
-# Roadmap
-
-Potential future work includes:
-
-- Indexed/parameterized property getter invocation with explicit argument marshalling, only if required by future consumers.
-- Thread-static storage resolution.
-- Literal constant retrieval.
-- Richer generic and nested semantic identities.
-- Additional navigation and metadata endpoints.
-- A separate, explicitly designed general managed invocation layer only after thread attachment, GC, exception, ABI, boxing/unboxing, and argument marshalling requirements are modeled safely.
-
-Field writes and property setters are intentionally deferred to a later stage.
+Integration tests distinguish functional assertions from timing observations. Cache correctness is validated through stable identity, result reuse, explicit stale-generation rejection, and successful rematerialization rather than assuming a particular wall-clock duration.
